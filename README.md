@@ -20,6 +20,11 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 > [!TIP]
 > **TL;DR** — Run `python autorun.py myprogram.py` once. Your script now starts on every reboot, visibly. Add `--hide` to run it silently. Add `--stop` to remove it forever.
 
+> [!WARNING]
+> **Windows users — run `cmd.exe` as Administrator.**
+> `autorun.py` uses Task Scheduler (`schtasks`), which returns an **`ERROR: Access is denied`** (or `ERRO`) if the terminal is not elevated. Right-click **Command Prompt → Run as administrator** before running any `autorun.py` command.
+> **Linux users — no `sudo` or root needed.** Everything runs at the user level via XDG Autostart.
+
 ---
 
 ## 📑 Table of Contents
@@ -68,19 +73,35 @@ python autorun.py myprogram.py --stop     # remove permanently
 
 ## ⚡ Quick Start
 
+> [!IMPORTANT]
+> **Windows:** open **Command Prompt as Administrator** first (Start → type `cmd` → right-click → **Run as administrator**). Without elevation, `schtasks` returns `ERROR: Access is denied` and the script will exit.
+> **Linux:** run normally as your user — **no `sudo` needed**.
+
+**Windows — open elevated terminal:**
+
+```cmd
+:: Start menu → search "cmd" → Right-click → "Run as administrator"
+:: OR press Win+X → "Terminal (Admin)" / "Command Prompt (Admin)"
+:: Then, in the elevated window:
+cd C:\path\to\autorun
+python autorun.py C:\path\to\myprogram.py
+```
+
+**Linux — open a normal terminal:**
+
 ```bash
 # 1. Clone the repo
 git clone https://github.com/<your-username>/autorun.git
 cd autorun
 
 # 2. Install your script — visible on every reboot
-python autorun.py /path/to/myprogram.py
+python3 autorun.py /path/to/myprogram.py
 
 # 3. Or install it silently in the background
-python autorun.py /path/to/myprogram.py --hide
+python3 autorun.py /path/to/myprogram.py --hide
 
 # 4. Remove it permanently when done
-python autorun.py myprogram.py --stop
+python3 autorun.py myprogram.py --stop
 ```
 
 That's it. No `pip install`, no virtualenv, no compiled extensions.
@@ -115,7 +136,7 @@ Killing via Task Manager / `kill` stops only the *current* session. Next reboot 
 `--stop` kills the process, removes the autostart entry, and deletes the copy.
 
 **🌐 XDG-compliant on Linux**
-GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC.
+GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC — **no root needed**.
 
 **⚡ Modern terminal support**
 `xdg-terminal-exec`, `ptyxis`, `kgx`, `ghostty`, `foot`, `gnome-terminal`, `konsole`, `xfce4-terminal`, `xterm`, `x-terminal-emulator`.
@@ -128,18 +149,18 @@ GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC.
 
 ## 💻 Supported Operating Systems
 
-| OS | Version Tested | Autostart Mechanism | Notes |
-|:---|:---|:---|:---|
-| **Arch Linux** | Rolling | XDG Autostart | Any DE / WM |
-| **Omarchy Linux** | Rolling (Hyprland) | XDG + `xdg-terminal-exec` | Ghostty / Foot / Alacritty / Kitty |
-| **Ubuntu** | 22.04 · 24.04 · 25.04 | XDG Autostart | GNOME |
-| **Kali Linux** | Latest | XDG Autostart | XFCE / GNOME |
-| **Linux Mint** | 21 · 22 | XDG Autostart | Cinnamon / XFCE / MATE |
-| **Fedora Workstation** | 39 · 40 · 41 | XDG Autostart | GNOME / KDE / XFCE |
-| **Pop!_OS** | 22.04 · 24.04 (COSMIC) | XDG Autostart | Auto-detects `ptyxis` / `kgx` |
-| **Zorin OS** | 17 · 18 | XDG Autostart | GNOME-based |
-| **Windows 10** | 22H2 | Task Scheduler | `ONLOGON /IT` |
-| **Windows 11** | 23H2 · 24H2 · 25H2 | Task Scheduler | 25H2 gets extra startup delay |
+| OS | Version Tested | Autostart Mechanism | Elevation Required? | Notes |
+|:---|:---|:---|:---:|:---|
+| **Arch Linux** | Rolling | XDG Autostart | ❌ no | Any DE / WM |
+| **Omarchy Linux** | Rolling (Hyprland) | XDG + `xdg-terminal-exec` | ❌ no | Ghostty / Foot / Alacritty / Kitty |
+| **Ubuntu** | 22.04 · 24.04 · 25.04 | XDG Autostart | ❌ no | GNOME |
+| **Kali Linux** | Latest | XDG Autostart | ❌ no | XFCE / GNOME |
+| **Linux Mint** | 21 · 22 | XDG Autostart | ❌ no | Cinnamon / XFCE / MATE |
+| **Fedora Workstation** | 39 · 40 · 41 | XDG Autostart | ❌ no | GNOME / KDE / XFCE |
+| **Pop!_OS** | 22.04 · 24.04 (COSMIC) | XDG Autostart | ❌ no | Auto-detects `ptyxis` / `kgx` |
+| **Zorin OS** | 17 · 18 | XDG Autostart | ❌ no | GNOME-based |
+| **Windows 10** | 22H2 | Task Scheduler | ✅ **Administrator** | `ONLOGON /IT` |
+| **Windows 11** | 23H2 · 24H2 · 25H2 | Task Scheduler | ✅ **Administrator** | 25H2 gets extra startup delay |
 
 ---
 
@@ -148,32 +169,58 @@ GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC.
 <details>
 <summary><b>Prerequisites</b></summary>
 
-| Requirement | Details |
-|:---|:---|
-| **Python 3.8+** | Installed on the target system |
-| **Windows** | `pythonw.exe` must be available (ships with the standard installer) |
-| **Linux** | A desktop environment that honours the XDG Autostart spec (all mainstream DEs do) |
+| Requirement | Linux | Windows |
+|:---|:---|:---|
+| **Python 3.8+** | ✅ required | ✅ required |
+| **`pythonw.exe`** | — | ✅ ships with the standard installer |
+| **Desktop environment** | ✅ any XDG-compliant DE | — (Task Scheduler) |
+| **Elevation** | ❌ **not needed** — user-level autostart | ✅ **Administrator cmd.exe required** |
+
+> [!WARNING]
+> **Windows:** Task Scheduler operations (`schtasks /Create`, `/Delete`) fail with `ERROR: Access is denied` (or `ERRO`) when the terminal is not elevated. There is no way around this — Windows requires admin rights to register tasks that run at logon.
 
 </details>
 
 <details>
-<summary><b>Steps</b></summary>
+<summary><b>Steps — Linux</b></summary>
 
 ```bash
 git clone https://github.com/<your-username>/autorun.git
 cd autorun
 
 # Verify Python
-python --version   # or: python3 --version
+python3 --version
 ```
 
 `autorun.py` uses **only the Python standard library** — no third-party packages, no compilation, no virtualenv required.
 
 </details>
 
+<details>
+<summary><b>Steps — Windows</b></summary>
+
+1. **Open an elevated Command Prompt:**
+   - Start menu → search `cmd` → right-click **Run as administrator**, **or**
+   - Press <kbd>Win</kbd> + <kbd>X</kbd> → **Terminal (Admin)** / **Command Prompt (Admin)**
+2. Verify the window title says **"Administrator"**.
+3. Clone and run:
+
+```cmd
+git clone https://github.com/<your-username>/autorun.git
+cd autorun
+
+python --version
+```
+
+</details>
+
 ---
 
 ## 🎯 Usage
+
+> [!IMPORTANT]
+> **Windows:** every command below must be run from an **elevated** Command Prompt.
+> **Linux:** run from any normal terminal — no elevation.
 
 ### Visible mode (default)
 
@@ -207,6 +254,7 @@ python autorun.py myprogram.py --stop
 
 > [!IMPORTANT]
 > After `--stop`, the program **will not come back** on reboot.
+> On **Windows**, `--stop` also requires an **elevated** Command Prompt because deleting a scheduled task needs admin rights.
 
 <details>
 <summary><b>Handling <code>.pyw</code> files on Windows</b></summary>
@@ -225,22 +273,22 @@ The **base name** (`myprogram`) is what `--stop` uses to find the copy, so `--st
 
 ## 📊 Behavior Matrix
 
-| Command | Saved as | Runs with | Window? | Survives reboot? |
-|:---|:---|:---|:---:|:---:|
-| `autorun.py app.py` *(Linux)* | `app.py` | `python3` | ✅ terminal | ✅ yes |
-| `autorun.py app.py --hide` *(Linux)* | `app.py` | `python3` *(detached)* | ❌ none | ✅ yes |
-| `autorun.py app.py` *(Windows)* | `app.py` | `python.exe` | ✅ console | ✅ yes |
-| `autorun.py app.py --hide` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes |
-| `autorun.py app.pyw` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes |
-| `autorun.py app.py --stop` | — | — | — | ❌ removed |
+| Command | Saved as | Runs with | Window? | Survives reboot? | Elevation? |
+|:---|:---|:---|:---:|:---:|:---:|
+| `autorun.py app.py` *(Linux)* | `app.py` | `python3` | ✅ terminal | ✅ yes | ❌ no |
+| `autorun.py app.py --hide` *(Linux)* | `app.py` | `python3` *(detached)* | ❌ none | ✅ yes | ❌ no |
+| `autorun.py app.py` *(Windows)* | `app.py` | `python.exe` | ✅ console | ✅ yes | ✅ **Admin** |
+| `autorun.py app.py --hide` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
+| `autorun.py app.pyw` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
+| `autorun.py app.py --stop` | — | — | — | ❌ removed | ✅ **Admin** *(Windows only)* |
 
 ### Session kill vs. permanent stop
 
-| Action | Effect |
-|:---|:---|
-| Task Manager → End task | ❌ stops current session only — **returns next login** |
-| `kill <pid>` *(Linux)* | ❌ stops current session only — **returns next login** |
-| `autorun.py app.py --stop` | ✅ **permanent** — autostart entry deleted, will never return |
+| Action | Effect | Elevation? |
+|:---|:---|:---:|
+| Task Manager → End task | ❌ stops current session only — **returns next login** | ❌ no |
+| `kill <pid>` *(Linux)* | ❌ stops current session only — **returns next login** | ❌ no |
+| `autorun.py app.py --stop` | ✅ **permanent** — autostart entry deleted, will never return | ✅ **Admin** *(Windows only)* |
 
 > [!NOTE]
 > This is by design — it mirrors how real "always-on" services behave. Only an explicit `--stop` removes the autostart entry.
@@ -258,6 +306,12 @@ Uses **Task Scheduler** with `/SC ONLOGON /IT /RL LIMITED`:
 | `/SC ONLOGON` | Fires at every user login |
 | `/IT` | Runs in the **interactive user session** — required for visible console (session 0 cannot draw UI) |
 | `/RL LIMITED` | Runs with normal user rights, not elevated |
+
+> [!WARNING]
+> **`schtasks /Create` and `schtasks /Delete` require an elevated terminal**, even with `/RL LIMITED`. The `/RL LIMITED` flag controls the rights of the *running task*, not the rights needed to *create* it. Running `autorun.py` from a non-elevated `cmd.exe` returns:
+> ```
+> ERROR: Access is denied.
+> ```
 
 <details>
 <summary><b>Visible mode (<code>.py</code>) — task action</b></summary>
@@ -313,6 +367,9 @@ CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB
 ### Linux
 
 Uses the **XDG Autostart specification** — a `.desktop` file at `~/.config/autostart/<name>.desktop`.
+
+> [!TIP]
+> **No `sudo`, no root, no elevation needed.** Everything is written inside the user's own `$HOME`, which is the standard, spec-compliant location for per-user autostart entries.
 
 <details>
 <summary><b>Example generated <code>.desktop</code> file</b></summary>
@@ -382,20 +439,24 @@ subprocess.Popen(
 python autorun.py myprogram.py --stop
 ```
 
+> [!IMPORTANT]
+> **Windows:** `--stop` deletes a scheduled task, which requires an **elevated** Command Prompt. If you skip this, you'll see `ERROR: Access is denied`.
+> **Linux:** run normally — no `sudo`.
+
 > [!NOTE]
 > This single command kills every running instance, deletes the autostart entry, removes the copy, and cleans up `state.json`.
 
 <details>
 <summary><b>Nuke everything autorun.py ever created</b></summary>
 
-**Linux:**
+**Linux** *(no `sudo`)*:
 
 ```bash
 rm -rf ~/Visible-Background-Process
 rm -f ~/.config/autostart/*.desktop   # inspect first!
 ```
 
-**Windows (PowerShell):**
+**Windows (PowerShell — Run as Administrator):**
 
 ```powershell
 Remove-Item -Recurse -Force "$env:USERPROFILE\Visible-Background-Process"
@@ -446,6 +507,16 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 <details>
 <summary><b>🪟 Windows issues</b></summary>
 
+### `ERROR: Access is denied` / `ERRO` when running `autorun.py`
+
+**This is the most common issue.** `schtasks` requires an elevated terminal.
+
+**Fix:** Open **Command Prompt as Administrator**, then re-run the command.
+
+- Start menu → search `cmd` → right-click → **Run as administrator**
+- Or press <kbd>Win</kbd> + <kbd>X</kbd> → **Terminal (Admin)** / **Command Prompt (Admin)**
+- Verify the window title bar says **"Administrator: C:\Windows\System32\cmd.exe"**
+
 ### Visible console doesn't appear after reboot
 
 - Confirm the task exists: `schtasks /Query /TN VisibleBackground_myprogram`
@@ -458,15 +529,18 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 - Verify the task action references `pythonw.exe`, not `python.exe`
 - Do not edit the task to add `DETACHED_PROCESS` — it breaks `CREATE_NO_WINDOW`
 
-### Task creation fails with "Access denied"
+### Task creation fails with "The system cannot find the file specified"
 
-- Open an elevated (Administrator) Command Prompt **once**
-- `schtasks` with `/RL LIMITED` normally does not need elevation, but some hardened corporate environments enforce it
+- Ensure the `cmd.exe` working directory is valid
+- Confirm `python.exe` / `pythonw.exe` are on `PATH` — run `where python` and `where pythonw`
 
 </details>
 
 <details>
 <summary><b>🐧 Linux issues</b></summary>
+
+> [!TIP]
+> **Linux never needs `sudo` for `autorun.py`.** If any guide or error message tells you to `sudo`, something is wrong — the tool only writes into `$HOME`.
 
 ### No terminal opens in visible mode
 
@@ -495,6 +569,25 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 ---
 
 ## ❓ FAQ
+
+<details>
+<summary><b>Do I need to run <code>autorun.py</code> as Administrator on Windows?</b></summary>
+
+**Yes — for every command** (`install`, `--hide`, and `--stop`).
+
+- `schtasks /Create` — requires elevation
+- `schtasks /Delete` — requires elevation
+
+`/RL LIMITED` in the task itself only affects how the *running program* is launched — it does **not** exempt you from running the *installer* as admin.
+
+</details>
+
+<details>
+<summary><b>Do I need <code>sudo</code> on Linux?</b></summary>
+
+**No.** `autorun.py` on Linux only writes to `~/.config/autostart/` and `~/Visible-Background-Process/` — both inside your own home directory. Running it with `sudo` would put the files under `root`'s home and break the autostart entry for your user.
+
+</details>
 
 <details>
 <summary><b>What happens if I delete the original <code>myprogram.py</code>?</b></summary>
@@ -575,6 +668,7 @@ You are a senior cross-platform systems engineer. Update the provided `autorun.p
 4. Manual kill (Task Manager / `kill`) must only stop the current session; the autostart entry must survive so the program returns on next login.
 
 ### Windows-specific rules (must be preserved)
+- **Admin elevation required:** `schtasks /Create` and `schtasks /Delete` must be run from an **elevated** Command Prompt. The script should detect non-elevated execution (via `ctypes.windll.shell32.IsUserAnAdmin()`) and print a clear error/instruction before attempting `schtasks`, instead of letting Windows print a bare `ERROR: Access is denied`.
 - `.py` input without `--hide` → saved as `.py`, run with `python.exe` (visible console), task created with `/SC ONLOGON /IT`.
 - `.pyw` input OR `--hide` → saved as `.pyw`, run with `pythonw.exe`, **no console window**, task created with `/SC ONLOGON /IT`.
 - Hidden subprocess flags must be `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` and **must NOT include `DETACHED_PROCESS`** because MSDN documents that `CREATE_NO_WINDOW` is ignored when combined with `DETACHED_PROCESS`.
@@ -582,6 +676,7 @@ You are a senior cross-platform systems engineer. Update the provided `autorun.p
 - `--stop` must work regardless of whether the original argument was `.py` or `.pyw`; use the sanitized base name to locate the copy.
 
 ### Linux-specific rules (must be preserved)
+- **No sudo or root required.** Everything must be written to the current user's `$HOME` (`~/.config/autostart/` and `~/Visible-Background-Process/`). Never elevate to root on Linux.
 - Use `~/.config/autostart/<name>.desktop` for user-level autostart.
 - **Always** wrap `Exec=` in `sh -c 'cd "<copy_dir>" && …'` because XFCE and KDE Plasma ignore the `Path=` key in autostart `.desktop` files.
 - Hidden mode must use `subprocess.Popen` with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`, and `cwd=copy_dir`.
@@ -590,7 +685,7 @@ You are a senior cross-platform systems engineer. Update the provided `autorun.p
 
 ### How to update
 1. **Search** the latest official documentation for each OS:
-   - Microsoft Learn: `schtasks` syntax, `/IT` flag, session-0 isolation, Windows 11 25H2 desktop-init behavior.
+   - Microsoft Learn: `schtasks` syntax, `/IT` flag, elevation requirements, session-0 isolation, Windows 11 25H2 desktop-init behavior.
    - freedesktop.org: XDG Autostart Specification (current version).
    - XFCE Bugzilla / KDE Bugzilla: status of `Path=` key support in autostart entries.
    - Omarchy docs / GitHub: `xdg-terminal-exec` behavior and default terminal list.
@@ -601,7 +696,7 @@ You are a senior cross-platform systems engineer. Update the provided `autorun.p
 4. **Preserve** the original feature set and CLI contract exactly.
 5. **Return** the complete corrected script, followed by a table of every bug found and the fix applied.
 
-Do not add features that were not requested. Do not change the file-naming rules (`.py` vs `.pyw`) on Windows or the `--hide` semantics. If an OS has no confirmed changes, state that explicitly rather than guessing.
+Do not add features that were not requested. Do not change the file-naming rules (`.py` vs `.pyw`) on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. If an OS has no confirmed changes, state that explicitly rather than guessing.
 ```
 
 </details>
