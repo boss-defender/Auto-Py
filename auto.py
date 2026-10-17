@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import argparse
 import subprocess
 import signal
@@ -9,9 +10,9 @@ import re
 import shutil
 
 # ------------------------------------------------------------------
-# Paths
+# Paths  (normpath kills the mixed "C:\Users\Boss/..." separator)
 # ------------------------------------------------------------------
-BASE_DIR = os.path.expanduser("~/Visible-Background-Process")
+BASE_DIR = os.path.normpath(os.path.expanduser("~/Visible-Background-Process"))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LINUX_AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
 
@@ -41,7 +42,7 @@ def save_state(state):
 
 
 def sanitize_name(name):
-    base = os.path.basename(name)
+    base = os.path.basename(str(name).replace("\\", "/"))
     for ext in (".pyw", ".py"):
         if base.lower().endswith(ext):
             base = base[: -len(ext)]
@@ -50,7 +51,6 @@ def sanitize_name(name):
 
 
 def _windows_build():
-    """Return the Windows build number (0 on non-Windows)."""
     if platform.system().lower() != "windows":
         return 0
     try:
@@ -63,12 +63,7 @@ def _windows_build():
 # Windows helpers
 # ------------------------------------------------------------------
 def _windows_extension(target_script, hidden):
-    """
-    Windows rule:
-      .py  (or no extension) and not --hide → saved as .py   (foreground)
-      .pyw OR --hide                         → saved as .pyw  (background)
-    """
-    name = os.path.basename(target_script).lower()
+    name = os.path.basename(str(target_script).replace("\\", "/")).lower()
     if hidden or name.endswith(".pyw"):
         return ".pyw"
     return ".py"
@@ -120,17 +115,13 @@ def linux_remove_autostart(name):
 
 
 def _find_terminal_cmd(python_exe, copy_path, copy_dir):
-    """
-    Cover modern and legacy terminals across all supported distros.
-    gnome-terminal uses `--` because `-e` is deprecated in current GNOME.
-    """
     inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
     candidates = [
         ["xdg-terminal-exec", "sh", "-c", inner],
         ["x-terminal-emulator", "-e", "sh", "-c", inner],
         ["ptyxis", "--", "sh", "-c", inner],
         ["kgx", "--", "sh", "-c", inner],
-        ["gnome-terminal", "--", "sh", "-c", inner],   # -e deprecated
+        ["gnome-terminal", "--", "sh", "-c", inner],
         ["konsole", "-e", "sh", "-c", inner],
         ["xfce4-terminal", "-e", f'sh -c "{inner}"'],
         ["ghostty", "-e", "sh", "-c", inner],
@@ -205,32 +196,56 @@ def linux_kill(copy_path):
 
 
 # ------------------------------------------------------------------
-# Windows — Task Scheduler
+# Windows — Task Scheduler (VBS launcher: no blank CMD window)
 # ------------------------------------------------------------------
 def windows_task_name(name):
     return f"VisibleBackground_{name}"
+
+
+def windows_vbs_path(name):
+    return os.path.normpath(os.path.join(BASE_DIR, f"VisibleBackground_{name}.vbs"))
+
+
+def _write_windows_vbs_launcher(name, copy_path, copy_dir, ext, build):
+    if ext == ".pyw":
+        python_exe = _python_executable(".pyw")
+        style = "0"          # hidden
+    else:
+        python_exe = _python_executable(".py")
+        style = "1"          # normal window
+
+    # Windows 11 25H2 (build >= 26100): give the shell time to settle.
+    sleep_line = "WScript.Sleep 5000\n" if build >= 26100 else ""
+
+    copy_path = os.path.normpath(copy_path)
+    copy_dir = os.path.normpath(copy_dir)
+
+    content = (
+        f"{sleep_line}"
+        f'Set WshShell = CreateObject("WScript.Shell")\n'
+        f'WshShell.CurrentDirectory = "{copy_dir}"\n'
+        f'WshShell.Run """{python_exe}"" ""{copy_path}""", {style}, False\n'
+    )
+
+    vbs_path = windows_vbs_path(name)
+    with open(vbs_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return vbs_path
 
 
 def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
     task_name = windows_task_name(name)
     build = _windows_build()
 
-    # Windows 11 25H2 (build ≥ 26100) may delay desktop init at logon.
-    delay = "timeout /t 5 /nobreak >nul && " if build >= 26100 else ""
+    vbs_path = _write_windows_vbs_launcher(
+        name, copy_path, copy_dir, ext, build
+    )
 
-    if ext == ".pyw":
-        python_exe = _python_executable(".pyw")
-        action = (
-            f'cmd.exe /c cd /d "{copy_dir}" && '
-            f'{delay}"{python_exe}" "{copy_path}"'
-        )
-    else:
-        python_exe = _python_executable(".py")
-        action = (
-            f'cmd.exe /c cd /d "{copy_dir}" && '
-            f'{delay}start "VisibleBackground-{name}" '
-            f'"{python_exe}" "{copy_path}"'
-        )
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    wscript_exe = os.path.normpath(
+        os.path.join(system_root, "System32", "wscript.exe")
+    )
+    action = f'"{wscript_exe}" //B //Nologo "{vbs_path}"'
 
     args = [
         "schtasks", "/Create", "/F",
@@ -242,17 +257,25 @@ def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
     ]
     res = subprocess.run(args, capture_output=True, text=True)
     if res.returncode != 0:
+        try:
+            os.remove(vbs_path)
+        except Exception:
+            pass
         print(f"[-] schtasks failed: {res.stderr.strip() or res.stdout.strip()}")
         return False
     print(f"[+] Windows Task Scheduler entry created: {task_name}")
+    print(f"[+] VBS launcher written: {vbs_path}")
     return True
 
 
 def windows_remove_autostart(name):
     task_name = windows_task_name(name)
-    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"],
-                   capture_output=True)
-    print(f"[+] Removed Windows task: {task_name}")
+    res = subprocess.run(
+        ["schtasks", "/Delete", "/TN", task_name, "/F"],
+        capture_output=True,
+    )
+    if res.returncode == 0:
+        print(f"[+] Removed Windows task: {task_name}")
 
 
 def windows_launch_now(copy_path, copy_dir, name, ext):
@@ -281,12 +304,14 @@ def windows_launch_now(copy_path, copy_dir, name, ext):
 
 
 def windows_find_pids(copy_path):
-    safe = copy_path.replace("'", "''")
+    needle = os.path.normpath(copy_path).lower().replace("'", "''")
     ps = (
+        f"$needle = '{needle}'; "
         "Get-CimInstance Win32_Process | "
         "Where-Object { "
         "($_.Name -eq 'python.exe' -or $_.Name -eq 'pythonw.exe') "
-        f"-and $_.CommandLine -like '*{safe}*' "
+        "-and $_.CommandLine -and "
+        "$_.CommandLine.ToLower().Contains($needle) "
         "} | Select-Object -ExpandProperty ProcessId"
     )
     try:
@@ -306,6 +331,58 @@ def windows_kill(copy_path):
         print(f"[+] Killed PID {pid}")
 
 
+def _windows_remove_vbs_launcher(name):
+    vbs_path = windows_vbs_path(name)
+    if os.path.exists(vbs_path):
+        try:
+            os.remove(vbs_path)
+            print(f"[+] Removed VBS launcher: {vbs_path}")
+        except Exception as e:
+            print(f"[-] Could not remove VBS launcher: {e}")
+
+
+# ------------------------------------------------------------------
+# Stop helpers — work with or without state.json
+# ------------------------------------------------------------------
+def _resolve_copy_paths(target_script, name, state):
+    paths = set()
+
+    if name in state and "copy" in state[name]:
+        paths.add(os.path.normpath(state[name]["copy"]))
+
+    base = os.path.basename(str(target_script).replace("\\", "/"))
+    if base:
+        paths.add(os.path.normpath(os.path.join(BASE_DIR, base)))
+
+    for ext in (".py", ".pyw"):
+        paths.add(os.path.normpath(os.path.join(BASE_DIR, name + ext)))
+
+    if os.path.isdir(BASE_DIR):
+        for fname in os.listdir(BASE_DIR):
+            if sanitize_name(fname) == name:
+                paths.add(os.path.normpath(os.path.join(BASE_DIR, fname)))
+
+    return paths
+
+
+def _remove_with_retry(path, attempts=6, delay=0.5):
+    for i in range(attempts):
+        try:
+            os.remove(path)
+            print(f"[+] Removed copy: {path}")
+            return True
+        except FileNotFoundError:
+            return True
+        except PermissionError:
+            if i < attempts - 1:
+                time.sleep(delay)
+        except Exception as e:
+            print(f"[-] Could not remove copy {path}: {e}")
+            return False
+    print(f"[-] Could not remove copy {path} (still locked)")
+    return False
+
+
 # ------------------------------------------------------------------
 # Install / Uninstall
 # ------------------------------------------------------------------
@@ -320,16 +397,21 @@ def install(target_script, hidden):
 
     if system == "windows":
         ext = _windows_extension(target_script, hidden)
-        saved_name = os.path.basename(target_script)
+        saved_name = os.path.basename(str(target_script).replace("\\", "/"))
         for e in (".pyw", ".py"):
             if saved_name.lower().endswith(e):
                 saved_name = saved_name[: -len(e)]
                 break
         saved_name += ext
-        copy_path = os.path.join(BASE_DIR, saved_name)
+        copy_path = os.path.normpath(os.path.join(BASE_DIR, saved_name))
     else:
         ext = None
-        copy_path = os.path.join(BASE_DIR, os.path.basename(target_script))
+        copy_path = os.path.normpath(
+            os.path.join(
+                BASE_DIR,
+                os.path.basename(str(target_script).replace("\\", "/")),
+            )
+        )
 
     copy_dir = BASE_DIR
 
@@ -371,13 +453,14 @@ def install(target_script, hidden):
 
 
 def _uninstall_runtime(name, info, system):
-    copy_path = info["copy"]
+    copy_path = os.path.normpath(info["copy"])
     if system == "linux":
         linux_kill(copy_path)
         linux_remove_autostart(name)
     elif system == "windows":
         windows_kill(copy_path)
         windows_remove_autostart(name)
+        _windows_remove_vbs_launcher(name)
 
 
 def uninstall(target_script):
@@ -386,22 +469,48 @@ def uninstall(target_script):
     system = platform.system().lower()
     state = load_state()
 
-    if name in state:
-        _uninstall_runtime(name, state[name], system)
-        copy_path = state[name]["copy"]
-        if os.path.exists(copy_path):
+    copy_paths = _resolve_copy_paths(target_script, name, state)
+    print(f"[*] Resolved {len(copy_paths)} candidate path(s) for '{name}'.")
+
+    # 1. Kill every running process matching any candidate path.
+    finder = windows_find_pids if system == "windows" else linux_find_pids
+    all_pids = set()
+    for cp in copy_paths:
+        all_pids.update(finder(cp))
+
+    if not all_pids:
+        print("[*] No running process found to kill.")
+
+    for pid in sorted(all_pids):
+        if system == "windows":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                           capture_output=True)
+            print(f"[+] Killed PID {pid}")
+        else:
             try:
-                os.remove(copy_path)
-                print(f"[+] Removed copy: {copy_path}")
+                os.kill(pid, signal.SIGTERM)
+                print(f"[+] Killed PID {pid}")
+            except ProcessLookupError:
+                pass
             except Exception as e:
-                print(f"[-] Could not remove copy: {e}")
+                print(f"[-] Could not kill PID {pid}: {e}")
+
+    # 2. Remove autostart entry unconditionally.
+    if system == "linux":
+        linux_remove_autostart(name)
+    elif system == "windows":
+        windows_remove_autostart(name)
+        _windows_remove_vbs_launcher(name)
+
+    # 3. Delete every matching copy on disk.
+    for cp in copy_paths:
+        if os.path.exists(cp):
+            _remove_with_retry(cp)
+
+    # 4. Clean state.
+    if name in state:
         del state[name]
         save_state(state)
-    else:
-        if system == "linux":
-            linux_remove_autostart(name)
-        elif system == "windows":
-            windows_remove_autostart(name)
 
     print(f"[+] '{name}' stopped permanently. No autostart entry remains.")
 
