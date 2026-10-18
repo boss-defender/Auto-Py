@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 autorun.py
+# 🚀 auto.py
 
 **Install any Python script to start automatically — on every reboot, on every OS.**
 
@@ -18,11 +18,11 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 ---
 
 > [!TIP]
-> **TL;DR** — Run `python autorun.py myprogram.py` once. Your script now starts on every reboot, visibly. Add `--hide` to run it silently. Add `--stop` to remove it forever.
+> **TL;DR** — Run `python auto.py myprogram.py` once. Your script now starts on every reboot, visibly. Add `--hide` to run it silently. Add `--stop` to remove it forever.
 
 > [!WARNING]
 > **Windows users — run `cmd.exe` as Administrator.**
-> `autorun.py` uses Task Scheduler (`schtasks`), which returns an **`ERROR: Access is denied`** (or `ERRO`) if the terminal is not elevated. Right-click **Command Prompt → Run as administrator** before running any `autorun.py` command.
+> `auto.py` uses Task Scheduler (`schtasks`), which returns an **`ERROR: Access is denied`** (or `ERRO`) if the terminal is not elevated. Right-click **Command Prompt → Run as administrator** before running any `auto.py` command.
 > **Linux users — no `sudo` or root needed.** Everything runs at the user level via XDG Autostart.
 
 > **Tested on: Windows, Arch linux , Kali linux , Fedora , Linux mint**
@@ -37,7 +37,7 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 <details open>
 <summary><b>Click to expand / collapse</b></summary>
 
-- [Why autorun.py?](#-why-autorunpy)
+- [Why auto.py?](#-why-autopy)
 - [Quick Start](#-quick-start)
 - [Features](#-features)
 - [Supported Operating Systems](#-supported-operating-systems)
@@ -60,16 +60,16 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 
 ---
 
-## 🤔 Why autorun.py?
+## 🤔 Why auto.py?
 
 You wrote a Python script — a bot, a watcher, a server, a monitor — and you want it to **start on every boot**, on **both Linux and Windows**, with **one command**, without touching `systemd`, Task Scheduler, or `.desktop` files by hand.
 
-`autorun.py` does exactly that:
+`auto.py` does exactly that:
 
 ```bash
-python autorun.py myprogram.py            # visible, survives reboot
-python autorun.py myprogram.py --hide     # silent, survives reboot
-python autorun.py myprogram.py --stop     # remove permanently
+python auto.py myprogram.py            # visible, survives reboot
+python auto.py myprogram.py --hide     # silent, survives reboot
+python auto.py myprogram.py --stop     # remove permanently
 ```
 
 **Three commands. Two operating systems. Zero configuration files to edit.**
@@ -88,25 +88,25 @@ python autorun.py myprogram.py --stop     # remove permanently
 :: Start menu → search "cmd" → Right-click → "Run as administrator"
 :: OR press Win+X → "Terminal (Admin)" / "Command Prompt (Admin)"
 :: Then, in the elevated window:
-cd C:\path\to\autorun
-python autorun.py C:\path\to\myprogram.py
+cd C:\path\to\auto
+python auto.py C:\path\to\myprogram.py
 ```
 
 **Linux — open a normal terminal:**
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/<your-username>/autorun.git
-cd autorun
+git clone https://github.com/boss-defender/Auto-Py.git
+cd auto
 
 # 2. Install your script — visible on every reboot
-python3 autorun.py /path/to/myprogram.py
+python3 auto.py /path/to/myprogram.py
 
 # 3. Or install it silently in the background
-python3 autorun.py /path/to/myprogram.py --hide
+python3 auto.py /path/to/myprogram.py --hide
 
 # 4. Remove it permanently when done
-python3 autorun.py myprogram.py --stop
+python3 auto.py myprogram.py --stop
 ```
 
 That's it. No `pip install`, no virtualenv, no compiled extensions.
@@ -126,7 +126,7 @@ Auto-starts on every login/reboot until you `--stop` it.
 Show a terminal window, or run silently with no UI.
 
 **📦 Self-contained**
-Copies your script to `~/Visible-Background-Process/` — keeps running even if the original is deleted.
+Copies your script to `~/.configs/` — keeps running even if the original is deleted.
 
 **🐍 `.py` / `.pyw` aware on Windows**
 Automatically swaps to `pythonw.exe` + `.pyw` when `--hide` is used.
@@ -190,14 +190,14 @@ GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC — **no root nee
 <summary><b>Steps — Linux</b></summary>
 
 ```bash
-git clone https://github.com/<your-username>/autorun.git
-cd autorun
+git clone https://github.com/<your-username>/auto.git
+cd auto
 
 # Verify Python
 python3 --version
 ```
 
-`autorun.py` uses **only the Python standard library** — no third-party packages, no compilation, no virtualenv required.
+`auto.py` uses **only the Python standard library** — no third-party packages, no compilation, no virtualenv required.
 
 </details>
 
@@ -211,8 +211,8 @@ python3 --version
 3. Clone and run:
 
 ```cmd
-git clone https://github.com/<your-username>/autorun.git
-cd autorun
+git clone https://github.com/<your-username>/auto.git
+cd auto
 
 python --version
 ```
@@ -230,32 +230,32 @@ python --version
 ### Visible mode (default)
 
 ```bash
-python autorun.py myprogram.py
+python auto.py myprogram.py
 ```
 
-1. Copies `myprogram.py` → `~/Visible-Background-Process/myprogram.py`
+1. Copies `myprogram.py` → `~/.configs/myprogram.py`
 2. Registers it to run **with a terminal window** on every login
 3. Starts it immediately so you don't have to reboot
 
 ### Hidden mode (`--hide`)
 
 ```bash
-python autorun.py myprogram.py --hide
+python auto.py myprogram.py --hide
 ```
 
-1. Copies `myprogram.py` → `~/Visible-Background-Process/myprogram.pyw` **(Windows only)**
+1. Copies `myprogram.py` → `~/.configs/myprogram.pyw` **(Windows only)**
 2. Registers it to run **with no window** on every login
 3. Starts it immediately in the background
 
 ### Stop / Uninstall (`--stop`)
 
 ```bash
-python autorun.py myprogram.py --stop
+python auto.py myprogram.py --stop
 ```
 
 1. Kills the running copy
 2. Deletes the autostart entry (Task Scheduler task or `.desktop` file)
-3. Removes the copy from `~/Visible-Background-Process/`
+3. Removes the copy from `~/.configs/`
 
 > [!IMPORTANT]
 > After `--stop`, the program **will not come back** on reboot.
@@ -265,9 +265,9 @@ python autorun.py myprogram.py --stop
 <summary><b>Handling <code>.pyw</code> files on Windows</b></summary>
 
 ```bash
-python autorun.py myprogram.pyw            # background, .pyw saved
-python autorun.py myprogram.pyw --hide     # same result (redundant)
-python autorun.py myprogram.pyw --stop     # remove by base name
+python auto.py myprogram.pyw            # background, .pyw saved
+python auto.py myprogram.pyw --hide     # same result (redundant)
+python auto.py myprogram.pyw --stop     # remove by base name
 ```
 
 The **base name** (`myprogram`) is what `--stop` uses to find the copy, so `--stop` works regardless of whether you originally passed `.py` or `.pyw`.
@@ -280,12 +280,12 @@ The **base name** (`myprogram`) is what `--stop` uses to find the copy, so `--st
 
 | Command | Saved as | Runs with | Window? | Survives reboot? | Elevation? |
 |:---|:---|:---|:---:|:---:|:---:|
-| `autorun.py app.py` *(Linux)* | `app.py` | `python3` | ✅ terminal | ✅ yes | ❌ no |
-| `autorun.py app.py --hide` *(Linux)* | `app.py` | `python3` *(detached)* | ❌ none | ✅ yes | ❌ no |
-| `autorun.py app.py` *(Windows)* | `app.py` | `python.exe` | ✅ console | ✅ yes | ✅ **Admin** |
-| `autorun.py app.py --hide` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
-| `autorun.py app.pyw` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
-| `autorun.py app.py --stop` | — | — | — | ❌ removed | ✅ **Admin** *(Windows only)* |
+| `auto.py app.py` *(Linux)* | `app.py` | `python3` | ✅ terminal | ✅ yes | ❌ no |
+| `auto.py app.py --hide` *(Linux)* | `app.py` | `python3` *(detached)* | ❌ none | ✅ yes | ❌ no |
+| `auto.py app.py` *(Windows)* | `app.py` | `python.exe` | ✅ console | ✅ yes | ✅ **Admin** |
+| `auto.py app.py --hide` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
+| `auto.py app.pyw` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
+| `auto.py app.py --stop` | — | — | — | ❌ removed | ✅ **Admin** *(Windows only)* |
 
 ### Session kill vs. permanent stop
 
@@ -293,7 +293,7 @@ The **base name** (`myprogram`) is what `--stop` uses to find the copy, so `--st
 |:---|:---|:---:|
 | Task Manager → End task | ❌ stops current session only — **returns next login** | ❌ no |
 | `kill <pid>` *(Linux)* | ❌ stops current session only — **returns next login** | ❌ no |
-| `autorun.py app.py --stop` | ✅ **permanent** — autostart entry deleted, will never return | ✅ **Admin** *(Windows only)* |
+| `auto.py app.py --stop` | ✅ **permanent** — autostart entry deleted, will never return | ✅ **Admin** *(Windows only)* |
 
 > [!NOTE]
 > This is by design — it mirrors how real "always-on" services behave. Only an explicit `--stop` removes the autostart entry.
@@ -313,7 +313,7 @@ Uses **Task Scheduler** with `/SC ONLOGON /IT /RL LIMITED`:
 | `/RL LIMITED` | Runs with normal user rights, not elevated |
 
 > [!WARNING]
-> **`schtasks /Create` and `schtasks /Delete` require an elevated terminal**, even with `/RL LIMITED`. The `/RL LIMITED` flag controls the rights of the *running task*, not the rights needed to *create* it. Running `autorun.py` from a non-elevated `cmd.exe` returns:
+> **`schtasks /Create` and `schtasks /Delete` require an elevated terminal**, even with `/RL LIMITED`. The `/RL LIMITED` flag controls the rights of the *running task*, not the rights needed to *create* it. Running `auto.py` from a non-elevated `cmd.exe` returns:
 > ```
 > ERROR: Access is denied.
 > ```
@@ -322,7 +322,7 @@ Uses **Task Scheduler** with `/SC ONLOGON /IT /RL LIMITED`:
 <summary><b>Visible mode (<code>.py</code>) — task action</b></summary>
 
 ```cmd
-cmd.exe /c cd /d "%USERPROFILE%\Visible-Background-Process" && start "" "python.exe" "app.py"
+cmd.exe /c cd /d "%USERPROFILE%\.configs" && start "" "python.exe" "app.py"
 ```
 
 `start` forces a fresh console window even if the parent has none.
@@ -333,7 +333,7 @@ cmd.exe /c cd /d "%USERPROFILE%\Visible-Background-Process" && start "" "python.
 <summary><b>Hidden mode (<code>.pyw</code>) — task action</b></summary>
 
 ```cmd
-cmd.exe /c cd /d "%USERPROFILE%\Visible-Background-Process" && "pythonw.exe" "app.pyw"
+cmd.exe /c cd /d "%USERPROFILE%\.configs" && "pythonw.exe" "app.pyw"
 ```
 
 `pythonw.exe` is the windowless Python interpreter that ships with the standard installer.
@@ -343,7 +343,7 @@ cmd.exe /c cd /d "%USERPROFILE%\Visible-Background-Process" && "pythonw.exe" "ap
 <details>
 <summary><b>Windows 11 25H2 (build ≥ 26100) — extra startup delay</b></summary>
 
-Windows added a **Delayed Desktop Initialization** phase that can fire ONLOGON tasks before the shell is ready. On those builds, `autorun.py` prefixes the task action with:
+Windows added a **Delayed Desktop Initialization** phase that can fire ONLOGON tasks before the shell is ready. On those builds, `auto.py` prefixes the task action with:
 
 ```cmd
 timeout /t 5 /nobreak >nul &&
@@ -383,8 +383,8 @@ Uses the **XDG Autostart specification** — a `.desktop` file at `~/.config/aut
 [Desktop Entry]
 Type=Application
 Name=myprogram
-Exec=sh -c 'cd "/home/user/Visible-Background-Process" && "/usr/bin/python3" "/home/user/Visible-Background-Process/myprogram.py"'
-Path=/home/user/Visible-Background-Process
+Exec=sh -c 'cd "/home/user/.configs" && "/usr/bin/python3" "/home/user/.configs/myprogram.py"'
+Path=/home/user/.configs
 Terminal=true
 X-GNOME-Autostart-enabled=true
 Hidden=false
@@ -441,7 +441,7 @@ subprocess.Popen(
 ## 🗑️ Uninstalling
 
 ```bash
-python autorun.py myprogram.py --stop
+python auto.py myprogram.py --stop
 ```
 
 > [!IMPORTANT]
@@ -452,19 +452,19 @@ python autorun.py myprogram.py --stop
 > This single command kills every running instance, deletes the autostart entry, removes the copy, and cleans up `state.json`.
 
 <details>
-<summary><b>Nuke everything autorun.py ever created</b></summary>
+<summary><b>Nuke everything auto.py ever created</b></summary>
 
 **Linux** *(no `sudo`)*:
 
 ```bash
-rm -rf ~/Visible-Background-Process
+rm -rf ~/.configs
 rm -f ~/.config/autostart/*.desktop   # inspect first!
 ```
 
 **Windows (PowerShell — Run as Administrator):**
 
 ```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\Visible-Background-Process"
+Remove-Item -Recurse -Force "$env:USERPROFILE\.configs"
 Get-ScheduledTask | Where-Object { $_.TaskName -like "VisibleBackground_*" } | Unregister-ScheduledTask -Confirm:$false
 ```
 
@@ -478,7 +478,7 @@ After installing `myprogram.py`, your home directory contains:
 
 ```text
 ~/
-├── Visible-Background-Process/
+├── .configs/
 │   ├── myprogram.py        ← the copied script
 │   ├── state.json          ← registry of installed scripts
 │   └── ...                 ← other scripts you installed
@@ -496,7 +496,7 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 {
   "myprogram": {
     "source": "/home/user/projects/myprogram.py",
-    "copy":   "/home/user/Visible-Background-Process/myprogram.py",
+    "copy":   "/home/user/.configs/myprogram.py",
     "hidden": false,
     "ext":    null
   }
@@ -512,7 +512,7 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 <details>
 <summary><b>🪟 Windows issues</b></summary>
 
-### `ERROR: Access is denied` / `ERRO` when running `autorun.py`
+### `ERROR: Access is denied` / `ERRO` when running `auto.py`
 
 **This is the most common issue.** `schtasks` requires an elevated terminal.
 
@@ -545,12 +545,12 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 <summary><b>🐧 Linux issues</b></summary>
 
 > [!TIP]
-> **Linux never needs `sudo` for `autorun.py`.** If any guide or error message tells you to `sudo`, something is wrong — the tool only writes into `$HOME`.
+> **Linux never needs `sudo` for `auto.py`.** If any guide or error message tells you to `sudo`, something is wrong — the tool only writes into `$HOME`.
 
 ### No terminal opens in visible mode
 
 - Run `which xdg-terminal-exec ptyxis kgx gnome-terminal konsole xfce4-terminal` to see what's installed
-- `autorun.py` prints `[+] Started now in a visible terminal (X)` with the one it chose
+- `auto.py` prints `[+] Started now in a visible terminal (X)` with the one it chose
 - If nothing is printed, it fell back to detached mode
 
 ### `Path=` is ignored
@@ -567,7 +567,7 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 ### Killing the terminal kills the script
 
 - This happens only if you launch the script **manually** from a terminal
-- When launched by `autorun.py` via `.desktop`, the process is owned by the DE and survives
+- When launched by `auto.py` via `.desktop`, the process is owned by the DE and survives
 
 </details>
 
@@ -576,7 +576,7 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 ## ❓ FAQ
 
 <details>
-<summary><b>Do I need to run <code>autorun.py</code> as Administrator on Windows?</b></summary>
+<summary><b>Do I need to run <code>auto.py</code> as Administrator on Windows?</b></summary>
 
 **Yes — for every command** (`install`, `--hide`, and `--stop`).
 
@@ -590,14 +590,14 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 <details>
 <summary><b>Do I need <code>sudo</code> on Linux?</b></summary>
 
-**No.** `autorun.py` on Linux only writes to `~/.config/autostart/` and `~/Visible-Background-Process/` — both inside your own home directory. Running it with `sudo` would put the files under `root`'s home and break the autostart entry for your user.
+**No.** `auto.py` on Linux only writes to `~/.config/autostart/` and `~/.configs/` — both inside your own home directory. Running it with `sudo` would put the files under `root`'s home and break the autostart entry for your user.
 
 </details>
 
 <details>
 <summary><b>What happens if I delete the original <code>myprogram.py</code>?</b></summary>
 
-The copy in `~/Visible-Background-Process/` keeps running. `--stop` still works because it uses the copy.
+The copy in `~/.configs/` keeps running. `--stop` still works because it uses the copy.
 
 </details>
 
@@ -611,7 +611,7 @@ Yes. Each script gets its own autostart entry (`VisibleBackground_<name>` on Win
 <details>
 <summary><b>Can I reinstall the same script with different <code>--hide</code> settings?</b></summary>
 
-Yes. Running `autorun.py myprogram.py --hide` after `autorun.py myprogram.py` will tear down the old visible entry and install the hidden one.
+Yes. Running `auto.py myprogram.py --hide` after `auto.py myprogram.py` will tear down the old visible entry and install the hidden one.
 
 </details>
 
@@ -625,28 +625,28 @@ No — only the **base name** matters. `--stop myprogram.py` and `--stop myprogr
 <details>
 <summary><b>Can I run this on a server (no desktop)?</b></summary>
 
-`autorun.py` targets **user sessions**. On a headless server, use `systemd --user` directly. The visible mode will not work without a display server.
+`auto.py` targets **user sessions**. On a headless server, use `systemd --user` directly. The visible mode will not work without a display server.
 
 </details>
 
 <details>
 <summary><b>Is it safe to edit the <code>.desktop</code> file manually?</b></summary>
 
-Yes, but re-running `autorun.py` will overwrite it.
+Yes, but re-running `auto.py` will overwrite it.
 
 </details>
 
 <details>
 <summary><b>Where does the "program" actually run from?</b></summary>
 
-Always from `~/Visible-Background-Process/`, **never** from its original location. This means relative paths inside your script resolve relative to that folder.
+Always from `~/.configs/`, **never** from its original location. This means relative paths inside your script resolve relative to that folder.
 
 </details>
 
 <details>
 <summary><b>What Python interpreter is used?</b></summary>
 
-Whatever `sys.executable` points to when you run `autorun.py`. If you use a virtualenv, the venv's Python is used. On Windows, the `.exe` is swapped between `python.exe` and `pythonw.exe` as needed.
+Whatever `sys.executable` points to when you run `auto.py`. If you use a virtualenv, the venv's Python is used. On Windows, the `.exe` is swapped between `python.exe` and `pythonw.exe` as needed.
 
 </details>
 
@@ -660,16 +660,16 @@ OSes evolve. When Windows 12 ships, or when Fedora changes its default terminal 
 <summary><b>📋 Click to expand the full prompt</b></summary>
 
 ```text
-You are a senior cross-platform systems engineer. Update the provided `autorun.py` script so it remains fully compatible with the latest documented behavior of ALL of the following operating systems:
+You are a senior cross-platform systems engineer. Update the provided `auto.py` script so it remains fully compatible with the latest documented behavior of ALL of the following operating systems:
 
 **Windows:** Windows 10 (all supported builds), Windows 11 (including 23H2, 24H2, and 25H2), and any confirmed successor (e.g., Windows 12 — if it has shipped, otherwise explicitly state that it has not and skip it).
 
 **Linux distributions:** Arch Linux, Omarchy Linux, Ubuntu (LTS + interim), Kali Linux, Linux Mint (Cinnamon, XFCE, MATE), Fedora Workstation, Pop!_OS (GNOME + COSMIC), Zorin OS, and any other major Debian/Ubuntu/Fedora/Arch derivative that uses the XDG Autostart specification.
 
 ### What the script must do (unchanged behavior)
-1. `python autorun.py myprogram.py` → copies `myprogram.py` into `~/Visible-Background-Process/`, installs an autostart entry that runs the copy **visibly** on every reboot/login.
-2. `python autorun.py myprogram.py --hide` → same copy, but runs **silently in the background** on every reboot/login.
-3. `python autorun.py myprogram.py --stop` → kills the running copy, removes the autostart entry, and deletes the copy permanently.
+1. `python auto.py myprogram.py` → copies `myprogram.py` into `~/.configs/`, installs an autostart entry that runs the copy **visibly** on every reboot/login.
+2. `python auto.py myprogram.py --hide` → same copy, but runs **silently in the background** on every reboot/login.
+3. `python auto.py myprogram.py --stop` → kills the running copy, removes the autostart entry, and deletes the copy permanently.
 4. Manual kill (Task Manager / `kill`) must only stop the current session; the autostart entry must survive so the program returns on next login.
 
 ### Windows-specific rules (must be preserved)
@@ -681,7 +681,7 @@ You are a senior cross-platform systems engineer. Update the provided `autorun.p
 - `--stop` must work regardless of whether the original argument was `.py` or `.pyw`; use the sanitized base name to locate the copy.
 
 ### Linux-specific rules (must be preserved)
-- **No sudo or root required.** Everything must be written to the current user's `$HOME` (`~/.config/autostart/` and `~/Visible-Background-Process/`). Never elevate to root on Linux.
+- **No sudo or root required.** Everything must be written to the current user's `$HOME` (`~/.config/autostart/` and `~/.configs/`). Never elevate to root on Linux.
 - Use `~/.config/autostart/<name>.desktop` for user-level autostart.
 - **Always** wrap `Exec=` in `sh -c 'cd "<copy_dir>" && …'` because XFCE and KDE Plasma ignore the `Path=` key in autostart `.desktop` files.
 - Hidden mode must use `subprocess.Popen` with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`, and `cwd=copy_dir`.
