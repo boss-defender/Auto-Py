@@ -12,7 +12,7 @@ import shutil
 # ------------------------------------------------------------------
 # Paths  (normpath kills the mixed "C:\Users\Boss/..." separator)
 # ------------------------------------------------------------------
-BASE_DIR = os.path.normpath(os.path.expanduser("~/.caches"))
+BASE_DIR = os.path.normpath(os.path.expanduser("~/.configs"))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LINUX_AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
 
