@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import shlex
 import argparse
 import subprocess
 import signal
@@ -10,20 +11,39 @@ import re
 import shutil
 
 # ------------------------------------------------------------------
-# Paths  (normpath kills the mixed "C:\Users\Boss/..." separator)
+# Paths
 # ------------------------------------------------------------------
 BASE_DIR = os.path.normpath(os.path.expanduser("~/Visible-Background-Process"))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LINUX_AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
+SYSTEMD_USER_DIR = os.path.expanduser("~/.config/systemd/user")
 
 
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+def is_arch_linux():
+    return os.path.exists("/etc/arch-release")
+
+
+def is_linux_mint():
+    if os.path.exists("/etc/linuxmint/info"):
+        return True
+    try:
+        res = subprocess.run(
+            ["lsb_release", "-i", "-s"],
+            capture_output=True, text=True, timeout=2,
+        )
+        return "LinuxMint" in res.stdout
+    except Exception:
+        return False
+
+
 def ensure_directory():
     os.makedirs(BASE_DIR, exist_ok=True)
     if platform.system().lower() == "linux":
         os.makedirs(LINUX_AUTOSTART_DIR, exist_ok=True)
+        os.makedirs(SYSTEMD_USER_DIR, exist_ok=True)
 
 
 def load_state():
@@ -60,6 +80,32 @@ def _windows_build():
 
 
 # ------------------------------------------------------------------
+# Quoting helpers for Linux autostart files
+# ------------------------------------------------------------------
+def quote_desktop_arg(arg):
+    """Quote an argument for the Exec= key in a .desktop file."""
+    arg = (
+        arg.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("`", "\\`")
+        .replace("$", "\\$")
+    )
+    reserved = set(' \t\n"\'\\><~|&;$*?#()`')
+    if any(c in arg for c in reserved):
+        return f'"{arg}"'
+    return arg
+
+
+def quote_systemd_arg(arg):
+    """Quote an argument for systemd ExecStart=."""
+    arg = arg.replace("\\", "\\\\").replace('"', '\\"')
+    arg = arg.replace("$", "$$").replace("%", "%%")
+    if " " in arg or "\t" in arg:
+        return f'"{arg}"'
+    return arg
+
+
+# ------------------------------------------------------------------
 # Windows helpers
 # ------------------------------------------------------------------
 def _windows_extension(target_script, hidden):
@@ -79,7 +125,7 @@ def _python_executable(ext):
 
 
 # ------------------------------------------------------------------
-# Linux — XDG Autostart
+# Linux — XDG Autostart (all non-Arch, non-Mint)
 # ------------------------------------------------------------------
 def linux_desktop_path(name):
     return os.path.join(LINUX_AUTOSTART_DIR, f"{name}.desktop")
@@ -87,8 +133,15 @@ def linux_desktop_path(name):
 
 def linux_create_autostart(copy_path, copy_dir, name, hidden):
     python_exe = sys.executable
-    inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
-    exec_line = f"sh -c '{inner}'"
+    # Explicit sleep 5 inside sh -c is honoured by every autostart
+    # implementation, including systemd-xdg-autostart-generator.
+    inner_parts = [
+        "sleep", "5", "&&",
+        "cd", copy_dir, "&&",
+        python_exe, copy_path,
+    ]
+    inner = " ".join(quote_desktop_arg(p) for p in inner_parts)
+    exec_line = "sh -c " + quote_desktop_arg(inner)
     terminal = "false" if hidden else "true"
 
     content = f"""[Desktop Entry]
@@ -98,6 +151,7 @@ Exec={exec_line}
 Path={copy_dir}
 Terminal={terminal}
 X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5
 Hidden=false
 """
     path = linux_desktop_path(name)
@@ -115,7 +169,7 @@ def linux_remove_autostart(name):
 
 
 def _find_terminal_cmd(python_exe, copy_path, copy_dir):
-    inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
+    inner = f"cd {shlex.quote(copy_dir)} && {shlex.quote(python_exe)} {shlex.quote(copy_path)}"
     candidates = [
         ["xdg-terminal-exec", "sh", "-c", inner],
         ["x-terminal-emulator", "-e", "sh", "-c", inner],
@@ -123,7 +177,7 @@ def _find_terminal_cmd(python_exe, copy_path, copy_dir):
         ["kgx", "--", "sh", "-c", inner],
         ["gnome-terminal", "--", "sh", "-c", inner],
         ["konsole", "-e", "sh", "-c", inner],
-        ["xfce4-terminal", "-e", f'sh -c "{inner}"'],
+        ["xfce4-terminal", "-e", f"sh -c {shlex.quote(inner)}"],
         ["ghostty", "-e", "sh", "-c", inner],
         ["foot", "-e", "sh", "-c", inner],
         ["xterm", "-e", "sh", "-c", inner],
@@ -196,7 +250,104 @@ def linux_kill(copy_path):
 
 
 # ------------------------------------------------------------------
-# Windows — Task Scheduler (VBS launcher: no blank CMD window)
+# Systemd user service — Arch Linux and Linux Mint
+# ------------------------------------------------------------------
+def systemd_service_name(name):
+    return f"visible-background-{name}.service"
+
+
+def systemd_service_path(name):
+    return os.path.join(SYSTEMD_USER_DIR, systemd_service_name(name))
+
+
+def _systemctl_user(*args):
+    try:
+        res = subprocess.run(
+            ["systemctl", "--user", *args],
+            capture_output=True, text=True, check=False,
+        )
+        return res
+    except FileNotFoundError:
+        print("[!] systemctl not found — cannot manage systemd user service.")
+        return None
+
+
+def systemd_create_autostart(copy_path, copy_dir, name, hidden):
+    python_exe = sys.executable
+    service_name = systemd_service_name(name)
+    service_path = systemd_service_path(name)
+
+    if hidden:
+        exec_start = f"{quote_systemd_arg(python_exe)} {quote_systemd_arg(copy_path)}"
+    else:
+        terminal_cmd = _find_terminal_cmd(python_exe, copy_path, copy_dir)
+        if terminal_cmd:
+            exec_start = " ".join(quote_systemd_arg(part) for part in terminal_cmd)
+        else:
+            exec_start = f"{quote_systemd_arg(python_exe)} {quote_systemd_arg(copy_path)}"
+            print("[!] No terminal emulator found — service will run detached.")
+
+    unit = f"""[Unit]
+Description=VisibleBackground autostart for {name}
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory={copy_dir}
+ExecStartPre=/bin/sleep 5
+ExecStart={exec_start}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
+"""
+    with open(service_path, "w") as f:
+        f.write(unit)
+    os.chmod(service_path, 0o644)
+    print(f"[+] Systemd user unit: {service_path}")
+
+    res = _systemctl_user("daemon-reload")
+    if res is None:
+        try:
+            os.remove(service_path)
+        except Exception:
+            pass
+        return False
+
+    res = _systemctl_user("enable", "--now", service_name)
+    if res and res.returncode == 0:
+        print(f"[+] Enabled and started systemd user service: {service_name}")
+        return True
+
+    stderr = res.stderr.strip() if res else ""
+    print(f"[-] Could not enable systemd service: {stderr}")
+    try:
+        os.remove(service_path)
+    except Exception:
+        pass
+    return False
+
+
+def systemd_remove_autostart(name):
+    service_name = systemd_service_name(name)
+    service_path = systemd_service_path(name)
+
+    _systemctl_user("disable", "--now", service_name)
+
+    if os.path.exists(service_path):
+        try:
+            os.remove(service_path)
+            print(f"[+] Removed systemd unit: {service_path}")
+        except Exception as e:
+            print(f"[-] Could not remove systemd unit: {e}")
+
+    _systemctl_user("daemon-reload")
+    linux_remove_autostart(name)
+
+
+# ------------------------------------------------------------------
+# Windows — Task Scheduler
 # ------------------------------------------------------------------
 def windows_task_name(name):
     return f"VisibleBackground_{name}"
@@ -209,12 +360,11 @@ def windows_vbs_path(name):
 def _write_windows_vbs_launcher(name, copy_path, copy_dir, ext, build):
     if ext == ".pyw":
         python_exe = _python_executable(".pyw")
-        style = "0"          # hidden
+        style = "0"
     else:
         python_exe = _python_executable(".py")
-        style = "1"          # normal window
+        style = "1"
 
-    # Windows 11 25H2 (build >= 26100): give the shell time to settle.
     sleep_line = "WScript.Sleep 5000\n" if build >= 26100 else ""
 
     copy_path = os.path.normpath(copy_path)
@@ -342,7 +492,7 @@ def _windows_remove_vbs_launcher(name):
 
 
 # ------------------------------------------------------------------
-# Stop helpers — work with or without state.json
+# Stop helpers
 # ------------------------------------------------------------------
 def _resolve_copy_paths(target_script, name, state):
     paths = set()
@@ -424,8 +574,22 @@ def install(target_script, hidden):
     print(f"[+] Copied '{target_script}' → '{copy_path}'")
 
     if system == "linux":
-        linux_create_autostart(copy_path, copy_dir, name, hidden)
-        linux_launch_now(copy_path, copy_dir, hidden)
+        use_systemd = is_arch_linux() or is_linux_mint()
+        if use_systemd:
+            if is_arch_linux():
+                print("[*] Pure Arch Linux detected — using systemd user service.")
+            else:
+                print("[*] Linux Mint detected — using systemd user service to avoid Cinnamon cold-boot race.")
+            service_ok = systemd_create_autostart(copy_path, copy_dir, name, hidden)
+            if service_ok:
+                pass
+            else:
+                print("[!] Systemd service failed — falling back to XDG autostart.")
+                linux_create_autostart(copy_path, copy_dir, name, hidden)
+                linux_launch_now(copy_path, copy_dir, hidden)
+        else:
+            linux_create_autostart(copy_path, copy_dir, name, hidden)
+            linux_launch_now(copy_path, copy_dir, hidden)
     elif system == "windows":
         if not windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
             print("[-] Could not create autostart entry.")
@@ -447,7 +611,7 @@ def install(target_script, hidden):
         mode = "background (silent, .pyw)" if ext == ".pyw" else "foreground (visible, .py)"
     else:
         mode = "hidden (silent background)" if hidden else "visible (foreground)"
-    print(f"[+] '{name}' installed — {mode}. It will auto-start on every reboot.")
+    print(f"[+] '{name}' installed — {mode}. It will auto-start on every reboot and cold boot.")
     print(f"    To stop permanently: python {os.path.basename(__file__)} "
           f"{os.path.basename(copy_path)} --stop")
 
@@ -456,7 +620,10 @@ def _uninstall_runtime(name, info, system):
     copy_path = os.path.normpath(info["copy"])
     if system == "linux":
         linux_kill(copy_path)
-        linux_remove_autostart(name)
+        if is_arch_linux() or is_linux_mint():
+            systemd_remove_autostart(name)
+        else:
+            linux_remove_autostart(name)
     elif system == "windows":
         windows_kill(copy_path)
         windows_remove_autostart(name)
@@ -472,7 +639,6 @@ def uninstall(target_script):
     copy_paths = _resolve_copy_paths(target_script, name, state)
     print(f"[*] Resolved {len(copy_paths)} candidate path(s) for '{name}'.")
 
-    # 1. Kill every running process matching any candidate path.
     finder = windows_find_pids if system == "windows" else linux_find_pids
     all_pids = set()
     for cp in copy_paths:
@@ -495,19 +661,19 @@ def uninstall(target_script):
             except Exception as e:
                 print(f"[-] Could not kill PID {pid}: {e}")
 
-    # 2. Remove autostart entry unconditionally.
     if system == "linux":
-        linux_remove_autostart(name)
+        if is_arch_linux() or is_linux_mint():
+            systemd_remove_autostart(name)
+        else:
+            linux_remove_autostart(name)
     elif system == "windows":
         windows_remove_autostart(name)
         _windows_remove_vbs_launcher(name)
 
-    # 3. Delete every matching copy on disk.
     for cp in copy_paths:
         if os.path.exists(cp):
             _remove_with_retry(cp)
 
-    # 4. Clean state.
     if name in state:
         del state[name]
         save_state(state)
