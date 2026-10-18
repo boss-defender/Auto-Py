@@ -699,6 +699,12 @@ You are a senior cross-platform systems engineer. Update the provided `autorun.p
 Do not add features that were not requested. Do not change the file-naming rules (`.py` vs `.pyw`) on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. If an OS has no confirmed changes, state that explicitly rather than guessing.
 ```
 
+**Then again give this prompt:**
+
+```text
+Re-check the script again, find bugs and fix them. Always read the latest documentation and guidelines of every supported Linux distro. And also I didn't test the script on Fedora Linux. So make sure that on every distro it perfectly works, even after reboot and even after shutdown and start operating system again. Fix all the bugs and errors. Please re-check it perfectly again. Don't make any errors, it should work very smoothly without causing any issues.
+```
+
 </details>
 
 ---
