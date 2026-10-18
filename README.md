@@ -27,8 +27,6 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 
 > **Tested on: Windows, Arch linux , Kali linux , Fedora , Linux mint**
 
-> **Some features didn't work on Fedora, you may face some issues like screenshare or screenshot not working and if you press ctrl+c, you may loose access untill next loging or reboot in fedora**
-
 > **In Linux mint , it's not working after reboot**
 
 
