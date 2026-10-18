@@ -25,6 +25,13 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 > `autorun.py` uses Task Scheduler (`schtasks`), which returns an **`ERROR: Access is denied`** (or `ERRO`) if the terminal is not elevated. Right-click **Command Prompt → Run as administrator** before running any `autorun.py` command.
 > **Linux users — no `sudo` or root needed.** Everything runs at the user level via XDG Autostart.
 
+> **Tested on: Windows, Arch linux , Kali linux , Fedora , Linux mint**
+
+> **Some features didn't work on Fedora, you may face some issues like screenshare or screenshot not working and if you press ctrl+c, you may loose access untill next loging or reboot in fedora**
+
+> **In Linux mint , it's not working after reboot**
+
+
 ---
 
 ## 📑 Table of Contents
