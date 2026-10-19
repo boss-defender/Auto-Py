@@ -76,6 +76,70 @@ python auto.py myprogram.py --stop     # remove permanently
 
 ---
 
+## 🤖 Prompt for Future Updates
+
+OSes evolve. When Windows 12 ships, or when Fedora changes its default terminal again, paste the block below into any AI agent along with this file.
+
+<details>
+<summary><b>📋 Click to expand the full prompt</b></summary>
+
+```text
+You are a senior cross-platform systems engineer. Update the provided `auto.py` script so it remains fully compatible with the latest documented behavior of ALL of the following operating systems:
+
+**Windows:** Windows 10 (all supported builds), Windows 11 (including 23H2, 24H2, and 25H2), and any confirmed successor (e.g., Windows 12 — if it has shipped, otherwise explicitly state that it has not and skip it).
+
+**Linux distributions:** Arch Linux, Omarchy Linux, Ubuntu (LTS + interim), Kali Linux, Linux Mint (Cinnamon, XFCE, MATE), Fedora Workstation, Pop!_OS (GNOME + COSMIC), Zorin OS, and any other major Debian/Ubuntu/Fedora/Arch derivative that uses the XDG Autostart specification.
+
+### What the script must do (unchanged behavior)
+1. `python auto.py myprogram.py` → copies `myprogram.py` into `~/.configs/`, installs an autostart entry that runs the copy **visibly** on every reboot/login.
+2. `python auto.py myprogram.py --hide` → same copy, but runs **silently in the background** on every reboot/login.
+3. `python auto.py myprogram.py --stop` → kills the running copy, removes the autostart entry, and deletes the copy permanently.
+4. Manual kill (Task Manager / `kill`) must only stop the current session; the autostart entry must survive so the program returns on next login.
+
+### Windows-specific rules (must be preserved)
+- **Admin elevation required:** `schtasks /Create` and `schtasks /Delete` must be run from an **elevated** Command Prompt. The script should detect non-elevated execution (via `ctypes.windll.shell32.IsUserAnAdmin()`) and print a clear error/instruction before attempting `schtasks`, instead of letting Windows print a bare `ERROR: Access is denied`.
+- `.py` input without `--hide` → saved as `.py`, run with `python.exe` (visible console), task created with `/SC ONLOGON /IT`.
+- `.pyw` input OR `--hide` → saved as `.pyw`, run with `pythonw.exe`, **no console window**, task created with `/SC ONLOGON /IT`.
+- Hidden subprocess flags must be `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` and **must NOT include `DETACHED_PROCESS`** because MSDN documents that `CREATE_NO_WINDOW` is ignored when combined with `DETACHED_PROCESS`.
+- For Windows 11 build ≥ 26100 (25H2), add a short `timeout /t 5 /nobreak >nul &&` delay at the start of the task action to account for "Delayed Desktop Initialization."
+- `--stop` must work regardless of whether the original argument was `.py` or `.pyw`; use the sanitized base name to locate the copy.
+
+### Linux-specific rules (must be preserved)
+- **No sudo or root required.** Everything must be written to the current user's `$HOME` (`~/.config/autostart/` and `~/.configs/`). Never elevate to root on Linux.
+- Use `~/.config/autostart/<name>.desktop` for user-level autostart.
+- **Always** wrap `Exec=` in `sh -c 'cd "<copy_dir>" && …'` because XFCE and KDE Plasma ignore the `Path=` key in autostart `.desktop` files.
+- Hidden mode must use `subprocess.Popen` with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`, and `cwd=copy_dir`.
+- Visible mode must try terminal emulators in this order: `xdg-terminal-exec` (Omarchy / modern systems), `x-terminal-emulator` (Debian alternatives), `ptyxis` (Pop!_OS 24.04+ / GNOME 47+), `kgx` (GNOME Console), `gnome-terminal`, `konsole`, `xfce4-terminal`, `ghostty`, `foot`, `xterm`.
+- If no terminal is found, launch detached and print a warning (do not fail silently).
+
+### How to update
+1. **Search** the latest official documentation for each OS:
+   - Microsoft Learn: `schtasks` syntax, `/IT` flag, elevation requirements, session-0 isolation, Windows 11 25H2 desktop-init behavior.
+   - freedesktop.org: XDG Autostart Specification (current version).
+   - XFCE Bugzilla / KDE Bugzilla: status of `Path=` key support in autostart entries.
+   - Omarchy docs / GitHub: `xdg-terminal-exec` behavior and default terminal list.
+   - Pop!_OS / Fedora / Ubuntu release notes: default terminal emulator changes (e.g., `ptyxis`, `kgx`).
+   - Python docs: `subprocess` `creationflags` on Windows (current stable Python).
+2. **Compare** each documented behavior against the current script.
+3. **Fix** every mismatch, deprecated flag, or newly documented bug.
+4. **Preserve** the original feature set and CLI contract exactly.
+5. **Return** the complete corrected script, followed by a table of every bug found and the fix applied.
+
+Do not add features that were not requested. Do not change the file-naming rules (`.py` vs `.pyw`) on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. If an OS has no confirmed changes, state that explicitly rather than guessing.
+```
+
+**Then again give this prompt:**
+
+```text
+Re-check the script again, find bugs and fix them. Always read the latest documentation and guidelines of every supported Linux distro. And also I didn't test the script on Fedora Linux. So make sure that on every distro it perfectly works, even after reboot and even after shutdown and start operating system again. Fix all the bugs and errors. Please re-check it perfectly again. Don't make any errors, it should work very smoothly without causing any issues.
+```
+
+</details>
+
+---
+
+---
+
 ## ⚡ Quick Start
 
 > [!IMPORTANT]
@@ -654,67 +718,6 @@ Whatever `sys.executable` points to when you run `auto.py`. If you use a virtual
 
 ---
 
-## 🤖 Prompt for Future Updates
-
-OSes evolve. When Windows 12 ships, or when Fedora changes its default terminal again, paste the block below into any AI agent along with this file.
-
-<details>
-<summary><b>📋 Click to expand the full prompt</b></summary>
-
-```text
-You are a senior cross-platform systems engineer. Update the provided `auto.py` script so it remains fully compatible with the latest documented behavior of ALL of the following operating systems:
-
-**Windows:** Windows 10 (all supported builds), Windows 11 (including 23H2, 24H2, and 25H2), and any confirmed successor (e.g., Windows 12 — if it has shipped, otherwise explicitly state that it has not and skip it).
-
-**Linux distributions:** Arch Linux, Omarchy Linux, Ubuntu (LTS + interim), Kali Linux, Linux Mint (Cinnamon, XFCE, MATE), Fedora Workstation, Pop!_OS (GNOME + COSMIC), Zorin OS, and any other major Debian/Ubuntu/Fedora/Arch derivative that uses the XDG Autostart specification.
-
-### What the script must do (unchanged behavior)
-1. `python auto.py myprogram.py` → copies `myprogram.py` into `~/.configs/`, installs an autostart entry that runs the copy **visibly** on every reboot/login.
-2. `python auto.py myprogram.py --hide` → same copy, but runs **silently in the background** on every reboot/login.
-3. `python auto.py myprogram.py --stop` → kills the running copy, removes the autostart entry, and deletes the copy permanently.
-4. Manual kill (Task Manager / `kill`) must only stop the current session; the autostart entry must survive so the program returns on next login.
-
-### Windows-specific rules (must be preserved)
-- **Admin elevation required:** `schtasks /Create` and `schtasks /Delete` must be run from an **elevated** Command Prompt. The script should detect non-elevated execution (via `ctypes.windll.shell32.IsUserAnAdmin()`) and print a clear error/instruction before attempting `schtasks`, instead of letting Windows print a bare `ERROR: Access is denied`.
-- `.py` input without `--hide` → saved as `.py`, run with `python.exe` (visible console), task created with `/SC ONLOGON /IT`.
-- `.pyw` input OR `--hide` → saved as `.pyw`, run with `pythonw.exe`, **no console window**, task created with `/SC ONLOGON /IT`.
-- Hidden subprocess flags must be `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` and **must NOT include `DETACHED_PROCESS`** because MSDN documents that `CREATE_NO_WINDOW` is ignored when combined with `DETACHED_PROCESS`.
-- For Windows 11 build ≥ 26100 (25H2), add a short `timeout /t 5 /nobreak >nul &&` delay at the start of the task action to account for "Delayed Desktop Initialization."
-- `--stop` must work regardless of whether the original argument was `.py` or `.pyw`; use the sanitized base name to locate the copy.
-
-### Linux-specific rules (must be preserved)
-- **No sudo or root required.** Everything must be written to the current user's `$HOME` (`~/.config/autostart/` and `~/.configs/`). Never elevate to root on Linux.
-- Use `~/.config/autostart/<name>.desktop` for user-level autostart.
-- **Always** wrap `Exec=` in `sh -c 'cd "<copy_dir>" && …'` because XFCE and KDE Plasma ignore the `Path=` key in autostart `.desktop` files.
-- Hidden mode must use `subprocess.Popen` with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`, and `cwd=copy_dir`.
-- Visible mode must try terminal emulators in this order: `xdg-terminal-exec` (Omarchy / modern systems), `x-terminal-emulator` (Debian alternatives), `ptyxis` (Pop!_OS 24.04+ / GNOME 47+), `kgx` (GNOME Console), `gnome-terminal`, `konsole`, `xfce4-terminal`, `ghostty`, `foot`, `xterm`.
-- If no terminal is found, launch detached and print a warning (do not fail silently).
-
-### How to update
-1. **Search** the latest official documentation for each OS:
-   - Microsoft Learn: `schtasks` syntax, `/IT` flag, elevation requirements, session-0 isolation, Windows 11 25H2 desktop-init behavior.
-   - freedesktop.org: XDG Autostart Specification (current version).
-   - XFCE Bugzilla / KDE Bugzilla: status of `Path=` key support in autostart entries.
-   - Omarchy docs / GitHub: `xdg-terminal-exec` behavior and default terminal list.
-   - Pop!_OS / Fedora / Ubuntu release notes: default terminal emulator changes (e.g., `ptyxis`, `kgx`).
-   - Python docs: `subprocess` `creationflags` on Windows (current stable Python).
-2. **Compare** each documented behavior against the current script.
-3. **Fix** every mismatch, deprecated flag, or newly documented bug.
-4. **Preserve** the original feature set and CLI contract exactly.
-5. **Return** the complete corrected script, followed by a table of every bug found and the fix applied.
-
-Do not add features that were not requested. Do not change the file-naming rules (`.py` vs `.pyw`) on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. If an OS has no confirmed changes, state that explicitly rather than guessing.
-```
-
-**Then again give this prompt:**
-
-```text
-Re-check the script again, find bugs and fix them. Always read the latest documentation and guidelines of every supported Linux distro. And also I didn't test the script on Fedora Linux. So make sure that on every distro it perfectly works, even after reboot and even after shutdown and start operating system again. Fix all the bugs and errors. Please re-check it perfectly again. Don't make any errors, it should work very smoothly without causing any issues.
-```
-
-</details>
-
----
 
 ## 📜 License
 
