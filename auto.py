@@ -8,22 +8,53 @@ import platform
 import json
 import re
 import shutil
+import ctypes
+import shlex
+import plistlib
 
 # ------------------------------------------------------------------
-# Paths  (normpath kills the mixed "C:\Users\Boss/..." separator)
+# Paths
 # ------------------------------------------------------------------
-BASE_DIR = os.path.normpath(os.path.expanduser("~/.configs"))
+BASE_DIR = os.path.normpath(os.path.expanduser("~/.caches"))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LINUX_AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
+MACOS_LAUNCHAGENTS_DIR = os.path.expanduser("~/Library/LaunchAgents")
+TERMUX_BOOT_DIR = os.path.expanduser("~/.termux/boot")
 
 
 # ------------------------------------------------------------------
-# Helpers
+# Platform detection
+# ------------------------------------------------------------------
+def _is_macos():
+    return platform.system().lower() == "darwin" and not _is_ios()
+
+
+def _is_ios():
+    return (
+        platform.system().lower() == "darwin"
+        and os.environ.get("HOME", "").startswith("/private/var/mobile")
+    )
+
+
+def _is_android():
+    return os.environ.get("ANDROID_ROOT") is not None or os.path.exists(
+        "/system/build.prop"
+    )
+
+
+def _is_termux():
+    return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
+
+
+# ------------------------------------------------------------------
+# Helpers (shared)
 # ------------------------------------------------------------------
 def ensure_directory():
     os.makedirs(BASE_DIR, exist_ok=True)
     if platform.system().lower() == "linux":
         os.makedirs(LINUX_AUTOSTART_DIR, exist_ok=True)
+    elif _is_macos():
+        os.makedirs(MACOS_LAUNCHAGENTS_DIR, exist_ok=True)
 
 
 def load_state():
@@ -50,6 +81,29 @@ def sanitize_name(name):
     return re.sub(r"[^a-zA-Z0-9\-_]", "-", base).lower() or "program"
 
 
+def _escape_exec_value(s):
+    """Escape for Desktop Entry Exec key (Linux).
+    Per the Desktop Entry Specification, within double quotes the characters
+    `` ` ``, `` $ ``, `` " `` and `` \\ `` must be escaped.  Literal `` % ``
+    must be written as `` %% `` so it is not interpreted as a field code."""
+    s = s.replace("\\", "\\\\")
+    s = s.replace('"', '\\"')
+    s = s.replace("`", "\\`")
+    s = s.replace("$", "\\$")
+    s = s.replace("%", "%%")
+    return s
+
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except Exception:
+        return False
+
+
+# ------------------------------------------------------------------
+# Windows helpers
+# ------------------------------------------------------------------
 def _windows_build():
     if platform.system().lower() != "windows":
         return 0
@@ -59,9 +113,6 @@ def _windows_build():
         return 0
 
 
-# ------------------------------------------------------------------
-# Windows helpers
-# ------------------------------------------------------------------
 def _windows_extension(target_script, hidden):
     name = os.path.basename(str(target_script).replace("\\", "/")).lower()
     if hidden or name.endswith(".pyw"):
@@ -88,8 +139,22 @@ def linux_desktop_path(name):
 def linux_create_autostart(copy_path, copy_dir, name, hidden):
     python_exe = sys.executable
     inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
-    exec_line = f"sh -c '{inner}'"
-    terminal = "false" if hidden else "true"
+
+    if hidden:
+        escaped_inner = _escape_exec_value(inner)
+        exec_line = f'sh -c "{escaped_inner}"'
+        terminal = "false"
+    else:
+        cmd = _find_linux_terminal(python_exe, copy_path, copy_dir)
+        if cmd:
+            exec_line = _escape_exec_value(shlex.join(cmd))
+            terminal = "false"
+        else:
+            escaped_inner = _escape_exec_value(inner)
+            exec_line = f'sh -c "{escaped_inner}"'
+            terminal = "false"
+            print("[!] No terminal emulator found for autostart entry; "
+                  "the program will run without a visible window.")
 
     content = f"""[Desktop Entry]
 Type=Application
@@ -114,7 +179,7 @@ def linux_remove_autostart(name):
         print(f"[+] Removed Linux autostart entry: {path}")
 
 
-def _find_terminal_cmd(python_exe, copy_path, copy_dir):
+def _find_linux_terminal(python_exe, copy_path, copy_dir):
     inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
     candidates = [
         ["xdg-terminal-exec", "sh", "-c", inner],
@@ -124,6 +189,8 @@ def _find_terminal_cmd(python_exe, copy_path, copy_dir):
         ["gnome-terminal", "--", "sh", "-c", inner],
         ["konsole", "-e", "sh", "-c", inner],
         ["xfce4-terminal", "-e", f'sh -c "{inner}"'],
+        ["mate-terminal", "-e", f'sh -c "{inner}"'],
+        ["cosmic-term", "-e", "sh", "-c", inner],
         ["ghostty", "-e", "sh", "-c", inner],
         ["foot", "-e", "sh", "-c", inner],
         ["xterm", "-e", "sh", "-c", inner],
@@ -146,7 +213,7 @@ def linux_launch_now(copy_path, copy_dir, hidden):
         )
         print("[+] Started now (hidden/background).")
     else:
-        cmd = _find_terminal_cmd(python_exe, copy_path, copy_dir)
+        cmd = _find_linux_terminal(python_exe, copy_path, copy_dir)
         if cmd:
             subprocess.Popen(cmd, start_new_session=True)
             print(f"[+] Started now in a visible terminal ({cmd[0]}).")
@@ -196,6 +263,243 @@ def linux_kill(copy_path):
 
 
 # ------------------------------------------------------------------
+# macOS — LaunchAgent
+# ------------------------------------------------------------------
+def macos_plist_path(name):
+    return os.path.join(MACOS_LAUNCHAGENTS_DIR, f"com.visiblebackground.{name}.plist")
+
+
+def _macos_python_path():
+    return sys.executable or "/usr/bin/python3"
+
+
+def macos_create_autostart(copy_path, copy_dir, name, hidden):
+    python_exe = _macos_python_path()
+    label = f"com.visiblebackground.{name}"
+
+    if hidden:
+        program_args = [python_exe, copy_path]
+    else:
+        script = (
+            f'tell application "Terminal" to do script '
+            f'"{python_exe} {shlex.quote(copy_path)}"'
+        )
+        program_args = ["/usr/bin/osascript", "-e", script]
+
+    plist = {
+        "Label": label,
+        "ProgramArguments": program_args,
+        "WorkingDirectory": copy_dir,
+        "RunAtLoad": True,
+        "KeepAlive": False,
+        "StandardOutPath": os.path.join(BASE_DIR, f"{name}.out.log"),
+        "StandardErrorPath": os.path.join(BASE_DIR, f"{name}.err.log"),
+    }
+
+    plist_path = macos_plist_path(name)
+    with open(plist_path, "wb") as f:
+        plistlib.dump(plist, f)
+    os.chmod(plist_path, 0o644)
+    print(f"[+] macOS LaunchAgent written: {plist_path}")
+
+    uid = os.getuid()
+    loaded = False
+    # macOS 26 Tahoe can return EIO (5) on bootstrap even when the label is
+    # not loaded; legacy `load -w` still works and registers the job in gui/<uid>.
+    for cmd in (
+        ["launchctl", "bootstrap", f"gui/{uid}", plist_path],
+        ["launchctl", "load", "-w", plist_path],
+    ):
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0:
+            loaded = True
+            break
+        print(f"[!] {' '.join(cmd)} failed: {res.stderr.strip() or res.stdout.strip()}")
+
+    if not loaded:
+        print("[-] Could not load LaunchAgent.  You may need to log out and back in,")
+        print("    or load it manually with:")
+        print(f"    launchctl bootstrap gui/{uid} {plist_path}")
+
+
+def macos_remove_autostart(name):
+    plist_path = macos_plist_path(name)
+    uid = os.getuid()
+    label = f"com.visiblebackground.{name}"
+
+    for cmd in (
+        ["launchctl", "bootout", f"gui/{uid}/{label}"],
+        ["launchctl", "unload", "-w", plist_path],
+    ):
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode == 0:
+            break
+
+    if os.path.exists(plist_path):
+        os.remove(plist_path)
+        print(f"[+] Removed macOS LaunchAgent: {plist_path}")
+
+
+def macos_launch_now(copy_path, copy_dir, hidden):
+    python_exe = _macos_python_path()
+    if hidden:
+        subprocess.Popen(
+            [python_exe, copy_path],
+            cwd=copy_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        print("[+] Started now (hidden/background).")
+    else:
+        script = (
+            f'tell application "Terminal" to do script '
+            f'"{python_exe} {shlex.quote(copy_path)}"'
+        )
+        subprocess.Popen(["osascript", "-e", script])
+        print("[+] Started now in Terminal (visible).")
+
+
+def macos_find_pids(copy_path):
+    pattern = f"python.*{re.escape(copy_path)}"
+    try:
+        res = subprocess.run(
+            ["pgrep", "-f", pattern], capture_output=True, text=True
+        )
+        if res.returncode == 0:
+            return [int(x) for x in res.stdout.split()]
+    except FileNotFoundError:
+        pass
+    return []
+
+
+def macos_kill(copy_path):
+    for pid in macos_find_pids(copy_path):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            print(f"[+] Killed PID {pid}")
+        except ProcessLookupError:
+            pass
+        except Exception as e:
+            print(f"[-] Could not kill PID {pid}: {e}")
+
+
+# ------------------------------------------------------------------
+# Android — Termux:Boot
+# ------------------------------------------------------------------
+def android_create_autostart(copy_path, copy_dir, name, hidden):
+    if not _is_termux():
+        print("[-] Android support requires Termux.")
+        print("    Install Termux from F-Droid, then install Termux:Boot,")
+        print("    and run this script inside Termux.")
+        sys.exit(1)
+
+    os.makedirs(TERMUX_BOOT_DIR, exist_ok=True)
+    boot_script = os.path.join(TERMUX_BOOT_DIR, f"start-{name}.sh")
+    python_exe = sys.executable or "python"
+
+    if hidden:
+        inner = f'{shlex.quote(python_exe)} {shlex.quote(copy_path)}'
+        script_content = (
+            "#!/data/data/com.termux/files/usr/bin/sh\n"
+            "termux-wake-lock\n"
+            f"cd {shlex.quote(copy_dir)}\n"
+            f"{inner} > /dev/null 2>&1 &\n"
+        )
+    else:
+        # Visible mode: start a new Termux session via TermuxActivity.
+        # The RUN_COMMAND_PATH / RUN_COMMAND_ARGUMENTS extras are accepted
+        # by TermuxActivity (see Termux discussion #4463).
+        script_content = (
+            "#!/data/data/com.termux/files/usr/bin/sh\n"
+            "termux-wake-lock\n"
+            "am start --user 0 \\\n"
+            "  -n com.termux/.app.TermuxActivity \\\n"
+            "  -a android.intent.action.RUN \\\n"
+            f"  --es com.termux.RUN_COMMAND_PATH {shlex.quote(python_exe)} \\\n"
+            f"  --esa com.termux.RUN_COMMAND_ARGUMENTS {shlex.quote(copy_path)}\n"
+        )
+
+    with open(boot_script, "w") as f:
+        f.write(script_content)
+    os.chmod(boot_script, 0o755)
+    print(f"[+] Android Termux boot script written: {boot_script}")
+    print("[!] Make sure Termux:Boot is installed and has been opened once.")
+    print("[!] Disable battery optimisation for Termux and Termux:Boot.")
+
+
+def android_remove_autostart(name):
+    boot_script = os.path.join(TERMUX_BOOT_DIR, f"start-{name}.sh")
+    if os.path.exists(boot_script):
+        os.remove(boot_script)
+        print(f"[+] Removed Termux boot script: {boot_script}")
+
+
+def android_launch_now(copy_path, copy_dir, hidden):
+    if not _is_termux():
+        print("[-] Cannot launch now: not running inside Termux.")
+        return
+    python_exe = sys.executable or "python"
+    if hidden:
+        subprocess.Popen(
+            [python_exe, copy_path],
+            cwd=copy_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        print("[+] Started now (hidden/background).")
+    else:
+        # Use TermuxActivity with RUN intent for a visible session.
+        subprocess.Popen(
+            [
+                "am", "start", "--user", "0",
+                "-n", "com.termux/.app.TermuxActivity",
+                "-a", "android.intent.action.RUN",
+                "--es", "com.termux.RUN_COMMAND_PATH", python_exe,
+                "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", copy_path,
+            ]
+        )
+        print("[+] Started now in a new visible Termux session.")
+
+
+def android_find_pids(copy_path):
+    pattern = f"python.*{re.escape(copy_path)}"
+    try:
+        res = subprocess.run(
+            ["pgrep", "-f", pattern], capture_output=True, text=True
+        )
+        if res.returncode == 0:
+            return [int(x) for x in res.stdout.split()]
+    except FileNotFoundError:
+        pass
+    return []
+
+
+def android_kill(copy_path):
+    for pid in android_find_pids(copy_path):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            print(f"[+] Killed PID {pid}")
+        except ProcessLookupError:
+            pass
+        except Exception as e:
+            print(f"[-] Could not kill PID {pid}: {e}")
+
+
+# ------------------------------------------------------------------
+# iOS — explicitly unsupported
+# ------------------------------------------------------------------
+def ios_unsupported():
+    print("[-] iOS does not allow arbitrary background scripts to run persistently.")
+    print("    Apple's background execution model suspends third‑party code")
+    print("    within seconds of leaving the foreground, and there is no")
+    print("    equivalent of launchd, systemd, or Task Scheduler for user scripts.")
+    print("    This is a documented platform limitation, not a missing feature.")
+    sys.exit(1)
+
+
+# ------------------------------------------------------------------
 # Windows — Task Scheduler (VBS launcher: no blank CMD window)
 # ------------------------------------------------------------------
 def windows_task_name(name):
@@ -206,22 +510,18 @@ def windows_vbs_path(name):
     return os.path.normpath(os.path.join(BASE_DIR, f"VisibleBackground_{name}.vbs"))
 
 
-def _write_windows_vbs_launcher(name, copy_path, copy_dir, ext, build):
+def _write_windows_vbs_launcher(name, copy_path, copy_dir, ext):
     if ext == ".pyw":
         python_exe = _python_executable(".pyw")
-        style = "0"          # hidden
+        style = "0"
     else:
         python_exe = _python_executable(".py")
-        style = "1"          # normal window
-
-    # Windows 11 25H2 (build >= 26100): give the shell time to settle.
-    sleep_line = "WScript.Sleep 5000\n" if build >= 26100 else ""
+        style = "1"
 
     copy_path = os.path.normpath(copy_path)
     copy_dir = os.path.normpath(copy_dir)
 
     content = (
-        f"{sleep_line}"
         f'Set WshShell = CreateObject("WScript.Shell")\n'
         f'WshShell.CurrentDirectory = "{copy_dir}"\n'
         f'WshShell.Run """{python_exe}"" ""{copy_path}""", {style}, False\n'
@@ -234,18 +534,23 @@ def _write_windows_vbs_launcher(name, copy_path, copy_dir, ext, build):
 
 
 def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
+    if not is_admin():
+        print("[-] ERROR: Administrator privileges required.")
+        print("    Please run this script from an elevated Command Prompt.")
+        sys.exit(1)
+
     task_name = windows_task_name(name)
     build = _windows_build()
-
-    vbs_path = _write_windows_vbs_launcher(
-        name, copy_path, copy_dir, ext, build
-    )
+    vbs_path = _write_windows_vbs_launcher(name, copy_path, copy_dir, ext)
 
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
     wscript_exe = os.path.normpath(
         os.path.join(system_root, "System32", "wscript.exe")
     )
     action = f'"{wscript_exe}" //B //Nologo "{vbs_path}"'
+
+    if build >= 26100:
+        action = f'cmd /c timeout /t 5 /nobreak >nul && {action}'
 
     args = [
         "schtasks", "/Create", "/F",
@@ -269,6 +574,11 @@ def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
 
 
 def windows_remove_autostart(name):
+    if not is_admin():
+        print("[-] ERROR: Administrator privileges required to delete the task.")
+        print("    Please run this script from an elevated Command Prompt.")
+        sys.exit(1)
+
     task_name = windows_task_name(name)
     res = subprocess.run(
         ["schtasks", "/Delete", "/TN", task_name, "/F"],
@@ -342,26 +652,21 @@ def _windows_remove_vbs_launcher(name):
 
 
 # ------------------------------------------------------------------
-# Stop helpers — work with or without state.json
+# Stop helpers
 # ------------------------------------------------------------------
 def _resolve_copy_paths(target_script, name, state):
     paths = set()
-
     if name in state and "copy" in state[name]:
         paths.add(os.path.normpath(state[name]["copy"]))
-
     base = os.path.basename(str(target_script).replace("\\", "/"))
     if base:
         paths.add(os.path.normpath(os.path.join(BASE_DIR, base)))
-
     for ext in (".py", ".pyw"):
         paths.add(os.path.normpath(os.path.join(BASE_DIR, name + ext)))
-
     if os.path.isdir(BASE_DIR):
         for fname in os.listdir(BASE_DIR):
             if sanitize_name(fname) == name:
                 paths.add(os.path.normpath(os.path.join(BASE_DIR, fname)))
-
     return paths
 
 
@@ -384,9 +689,12 @@ def _remove_with_retry(path, attempts=6, delay=0.5):
 
 
 # ------------------------------------------------------------------
-# Install / Uninstall
+# Install / Uninstall dispatcher
 # ------------------------------------------------------------------
 def install(target_script, hidden):
+    if _is_ios():
+        ios_unsupported()
+
     ensure_directory()
     if not os.path.isfile(target_script):
         print(f"[-] File not found: {target_script}")
@@ -395,7 +703,29 @@ def install(target_script, hidden):
     name = sanitize_name(target_script)
     system = platform.system().lower()
 
-    if system == "windows":
+    if _is_android():
+        if not _is_termux():
+            print("[-] Android support requires Termux.  Install Termux from F-Droid")
+            print("    and run this script inside Termux.")
+            sys.exit(1)
+        copy_path = os.path.normpath(
+            os.path.join(BASE_DIR, os.path.basename(target_script))
+        )
+        copy_dir = BASE_DIR
+        shutil.copy2(target_script, copy_path)
+        print(f"[+] Copied '{target_script}' → '{copy_path}'")
+        android_create_autostart(copy_path, copy_dir, name, hidden)
+        android_launch_now(copy_path, copy_dir, hidden)
+    elif _is_macos():
+        copy_path = os.path.normpath(
+            os.path.join(BASE_DIR, os.path.basename(target_script))
+        )
+        copy_dir = BASE_DIR
+        shutil.copy2(target_script, copy_path)
+        print(f"[+] Copied '{target_script}' → '{copy_path}'")
+        macos_create_autostart(copy_path, copy_dir, name, hidden)
+        macos_launch_now(copy_path, copy_dir, hidden)
+    elif system == "windows":
         ext = _windows_extension(target_script, hidden)
         saved_name = os.path.basename(str(target_script).replace("\\", "/"))
         for e in (".pyw", ".py"):
@@ -404,66 +734,41 @@ def install(target_script, hidden):
                 break
         saved_name += ext
         copy_path = os.path.normpath(os.path.join(BASE_DIR, saved_name))
-    else:
-        ext = None
-        copy_path = os.path.normpath(
-            os.path.join(
-                BASE_DIR,
-                os.path.basename(str(target_script).replace("\\", "/")),
-            )
-        )
-
-    copy_dir = BASE_DIR
-
-    state = load_state()
-    if name in state:
-        print(f"[*] '{name}' already installed — removing old instance first…")
-        _uninstall_runtime(name, state[name], system)
-
-    shutil.copy2(target_script, copy_path)
-    print(f"[+] Copied '{target_script}' → '{copy_path}'")
-
-    if system == "linux":
-        linux_create_autostart(copy_path, copy_dir, name, hidden)
-        linux_launch_now(copy_path, copy_dir, hidden)
-    elif system == "windows":
+        copy_dir = BASE_DIR
+        shutil.copy2(target_script, copy_path)
+        print(f"[+] Copied '{target_script}' → '{copy_path}'")
         if not windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
             print("[-] Could not create autostart entry.")
             sys.exit(1)
         windows_launch_now(copy_path, copy_dir, name, ext)
+    elif system == "linux":
+        copy_path = os.path.normpath(
+            os.path.join(BASE_DIR, os.path.basename(target_script))
+        )
+        copy_dir = BASE_DIR
+        shutil.copy2(target_script, copy_path)
+        print(f"[+] Copied '{target_script}' → '{copy_path}'")
+        linux_create_autostart(copy_path, copy_dir, name, hidden)
+        linux_launch_now(copy_path, copy_dir, hidden)
     else:
         print(f"[-] Unsupported OS: {system}")
         sys.exit(1)
 
+    state = load_state()
     state[name] = {
         "source": os.path.abspath(target_script),
         "copy": copy_path,
         "hidden": hidden,
-        "ext": ext,
+        "platform": "macos" if _is_macos() else ("android" if _is_android() else system),
     }
     save_state(state)
-
-    if system == "windows":
-        mode = "background (silent, .pyw)" if ext == ".pyw" else "foreground (visible, .py)"
-    else:
-        mode = "hidden (silent background)" if hidden else "visible (foreground)"
-    print(f"[+] '{name}' installed — {mode}. It will auto-start on every reboot.")
-    print(f"    To stop permanently: python {os.path.basename(__file__)} "
-          f"{os.path.basename(copy_path)} --stop")
-
-
-def _uninstall_runtime(name, info, system):
-    copy_path = os.path.normpath(info["copy"])
-    if system == "linux":
-        linux_kill(copy_path)
-        linux_remove_autostart(name)
-    elif system == "windows":
-        windows_kill(copy_path)
-        windows_remove_autostart(name)
-        _windows_remove_vbs_launcher(name)
+    print(f"[+] '{name}' installed. It will auto-start on every reboot/login.")
 
 
 def uninstall(target_script):
+    if _is_ios():
+        ios_unsupported()
+
     ensure_directory()
     name = sanitize_name(target_script)
     system = platform.system().lower()
@@ -472,47 +777,41 @@ def uninstall(target_script):
     copy_paths = _resolve_copy_paths(target_script, name, state)
     print(f"[*] Resolved {len(copy_paths)} candidate path(s) for '{name}'.")
 
-    # 1. Kill every running process matching any candidate path.
-    finder = windows_find_pids if system == "windows" else linux_find_pids
-    all_pids = set()
-    for cp in copy_paths:
-        all_pids.update(finder(cp))
+    # Kill every running process for every resolved path.
+    if _is_android():
+        for cp in copy_paths:
+            android_kill(cp)
+    elif _is_macos():
+        for cp in copy_paths:
+            macos_kill(cp)
+    elif system == "windows":
+        for cp in copy_paths:
+            windows_kill(cp)
+    else:
+        for cp in copy_paths:
+            linux_kill(cp)
 
-    if not all_pids:
-        print("[*] No running process found to kill.")
-
-    for pid in sorted(all_pids):
-        if system == "windows":
-            subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                           capture_output=True)
-            print(f"[+] Killed PID {pid}")
-        else:
-            try:
-                os.kill(pid, signal.SIGTERM)
-                print(f"[+] Killed PID {pid}")
-            except ProcessLookupError:
-                pass
-            except Exception as e:
-                print(f"[-] Could not kill PID {pid}: {e}")
-
-    # 2. Remove autostart entry unconditionally.
-    if system == "linux":
-        linux_remove_autostart(name)
+    # Remove autostart entry.
+    if _is_android():
+        android_remove_autostart(name)
+    elif _is_macos():
+        macos_remove_autostart(name)
     elif system == "windows":
         windows_remove_autostart(name)
         _windows_remove_vbs_launcher(name)
+    else:
+        linux_remove_autostart(name)
 
-    # 3. Delete every matching copy on disk.
+    # Delete copies.
     for cp in copy_paths:
         if os.path.exists(cp):
             _remove_with_retry(cp)
 
-    # 4. Clean state.
     if name in state:
         del state[name]
         save_state(state)
 
-    print(f"[+] '{name}' stopped permanently. No autostart entry remains.")
+    print(f"[+] '{name}' stopped permanently.")
 
 
 # ------------------------------------------------------------------
@@ -520,7 +819,7 @@ def uninstall(target_script):
 # ------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Install a Python script to run on every reboot — "
+        description="Install a Python script to run on every reboot/login — "
                     "visible by default, hidden with --hide."
     )
     parser.add_argument("script", help="Python script to schedule")
