@@ -94,6 +94,25 @@ def _escape_exec_value(s):
     return s
 
 
+def _quote_exec_arg(arg):
+    """Quote a single argument for the Desktop Entry Exec key.
+    Always use double quotes; escape all characters the spec requires."""
+    arg = arg.replace("\\", "\\\\")
+    arg = arg.replace('"', '\\"')
+    arg = arg.replace("`", "\\`")
+    arg = arg.replace("$", "\\$")
+    arg = arg.replace("%", "%%")
+    return f'"{arg}"'
+
+
+def _build_exec_line(cmd_list):
+    """Build a spec-compliant Exec= value from a command list.
+    Do NOT use shlex.join here: it emits single quotes, which the Desktop
+    Entry Exec grammar does not treat as quoting (it only recognises double
+    quotes), so single quotes would be passed literally to the shell."""
+    return " ".join(_quote_exec_arg(arg) for arg in cmd_list)
+
+
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
@@ -141,17 +160,17 @@ def linux_create_autostart(copy_path, copy_dir, name, hidden):
     inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
 
     if hidden:
-        escaped_inner = _escape_exec_value(inner)
-        exec_line = f'sh -c "{escaped_inner}"'
+        cmd = ["sh", "-c", inner]
+        exec_line = _build_exec_line(cmd)
         terminal = "false"
     else:
         cmd = _find_linux_terminal(python_exe, copy_path, copy_dir)
         if cmd:
-            exec_line = _escape_exec_value(shlex.join(cmd))
+            exec_line = _build_exec_line(cmd)
             terminal = "false"
         else:
-            escaped_inner = _escape_exec_value(inner)
-            exec_line = f'sh -c "{escaped_inner}"'
+            cmd = ["sh", "-c", inner]
+            exec_line = _build_exec_line(cmd)
             terminal = "false"
             print("[!] No terminal emulator found for autostart entry; "
                   "the program will run without a visible window.")
@@ -286,6 +305,10 @@ def macos_create_autostart(copy_path, copy_dir, name, hidden):
         )
         program_args = ["/usr/bin/osascript", "-e", script]
 
+    # launchd does NOT create the parent directory of StandardOutPath /
+    # StandardErrorPath.  Ensure it exists before writing the plist.
+    os.makedirs(BASE_DIR, exist_ok=True)
+
     plist = {
         "Label": label,
         "ProgramArguments": program_args,
@@ -304,17 +327,34 @@ def macos_create_autostart(copy_path, copy_dir, name, hidden):
 
     uid = os.getuid()
     loaded = False
-    # macOS 26 Tahoe can return EIO (5) on bootstrap even when the label is
-    # not loaded; legacy `load -w` still works and registers the job in gui/<uid>.
-    for cmd in (
+
+    # 1) Modern bootstrap (preferred)
+    res = subprocess.run(
         ["launchctl", "bootstrap", f"gui/{uid}", plist_path],
-        ["launchctl", "load", "-w", plist_path],
-    ):
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode == 0:
+        capture_output=True, text=True,
+    )
+    if res.returncode == 0:
+        loaded = True
+    else:
+        # 2) macOS 26 Tahoe known EIO/exit-5 fallback
+        print(f"[!] launchctl bootstrap failed: "
+              f"{res.stderr.strip() or res.stdout.strip()}; "
+              f"falling back to launchctl load -w")
+        res = subprocess.run(
+            ["launchctl", "load", "-w", plist_path],
+            capture_output=True, text=True,
+        )
+        # macOS 26 can return 0 while stderr still reports "Load failed: 5"
+        load_failed = (
+            res.returncode != 0
+            or "failed" in res.stderr.lower()
+            or "input/output error" in res.stderr.lower()
+        )
+        if not load_failed:
             loaded = True
-            break
-        print(f"[!] {' '.join(cmd)} failed: {res.stderr.strip() or res.stdout.strip()}")
+        else:
+            print(f"[!] launchctl load -w failed: "
+                  f"{res.stderr.strip() or res.stdout.strip()}")
 
     if not loaded:
         print("[-] Could not load LaunchAgent.  You may need to log out and back in,")
@@ -387,12 +427,27 @@ def macos_kill(copy_path):
 # ------------------------------------------------------------------
 # Android — Termux:Boot
 # ------------------------------------------------------------------
+def _android15_warning():
+    print()
+    print("[!] Android 15 known issue:")
+    print("    Android 15 may still kill Termux background processes even with")
+    print("    termux-wake-lock active and battery optimisation disabled.  This is")
+    print("    an upstream Android limitation, tracked in Termux issue #5150.")
+    print("    If your device exposes it, enable:")
+    print("      Settings → System → Developer options →")
+    print("      Disable child process restrictions")
+    print("    Do not expect the same background reliability as on Android 14 or older.")
+    print()
+
+
 def android_create_autostart(copy_path, copy_dir, name, hidden):
     if not _is_termux():
         print("[-] Android support requires Termux.")
         print("    Install Termux from F-Droid, then install Termux:Boot,")
         print("    and run this script inside Termux.")
         sys.exit(1)
+
+    _android15_warning()
 
     os.makedirs(TERMUX_BOOT_DIR, exist_ok=True)
     boot_script = os.path.join(TERMUX_BOOT_DIR, f"start-{name}.sh")
@@ -407,17 +462,19 @@ def android_create_autostart(copy_path, copy_dir, name, hidden):
             f"{inner} > /dev/null 2>&1 &\n"
         )
     else:
-        # Visible mode: start a new Termux session via TermuxActivity.
-        # The RUN_COMMAND_PATH / RUN_COMMAND_ARGUMENTS extras are accepted
-        # by TermuxActivity (see Termux discussion #4463).
+        # Use the documented RUN_COMMAND intent.  The previous use of
+        # android.intent.action.RUN was incorrect and does not start a
+        # foreground terminal session.
         script_content = (
             "#!/data/data/com.termux/files/usr/bin/sh\n"
             "termux-wake-lock\n"
-            "am start --user 0 \\\n"
-            "  -n com.termux/.app.TermuxActivity \\\n"
-            "  -a android.intent.action.RUN \\\n"
+            "am startservice --user 0 \\\n"
+            "  -n com.termux/com.termux.app.RunCommandService \\\n"
+            "  -a com.termux.RUN_COMMAND \\\n"
             f"  --es com.termux.RUN_COMMAND_PATH {shlex.quote(python_exe)} \\\n"
-            f"  --esa com.termux.RUN_COMMAND_ARGUMENTS {shlex.quote(copy_path)}\n"
+            f"  --esa com.termux.RUN_COMMAND_ARGUMENTS {shlex.quote(copy_path)} \\\n"
+            f"  --es com.termux.RUN_COMMAND_WORKDIR {shlex.quote(copy_dir)} \\\n"
+            "  --ez com.termux.RUN_COMMAND_BACKGROUND false\n"
         )
 
     with open(boot_script, "w") as f:
@@ -426,6 +483,7 @@ def android_create_autostart(copy_path, copy_dir, name, hidden):
     print(f"[+] Android Termux boot script written: {boot_script}")
     print("[!] Make sure Termux:Boot is installed and has been opened once.")
     print("[!] Disable battery optimisation for Termux and Termux:Boot.")
+    print("[!] Grant Termux the ‘Draw over other apps’ permission on Android 10+")
 
 
 def android_remove_autostart(name):
@@ -439,6 +497,7 @@ def android_launch_now(copy_path, copy_dir, hidden):
     if not _is_termux():
         print("[-] Cannot launch now: not running inside Termux.")
         return
+    _android15_warning()
     python_exe = sys.executable or "python"
     if hidden:
         subprocess.Popen(
@@ -450,14 +509,15 @@ def android_launch_now(copy_path, copy_dir, hidden):
         )
         print("[+] Started now (hidden/background).")
     else:
-        # Use TermuxActivity with RUN intent for a visible session.
         subprocess.Popen(
             [
-                "am", "start", "--user", "0",
-                "-n", "com.termux/.app.TermuxActivity",
-                "-a", "android.intent.action.RUN",
+                "am", "startservice", "--user", "0",
+                "-n", "com.termux/com.termux.app.RunCommandService",
+                "-a", "com.termux.RUN_COMMAND",
                 "--es", "com.termux.RUN_COMMAND_PATH", python_exe,
                 "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", copy_path,
+                "--es", "com.termux.RUN_COMMAND_WORKDIR", copy_dir,
+                "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
             ]
         )
         print("[+] Started now in a new visible Termux session.")
@@ -492,10 +552,31 @@ def android_kill(copy_path):
 # ------------------------------------------------------------------
 def ios_unsupported():
     print("[-] iOS does not allow arbitrary background scripts to run persistently.")
-    print("    Apple's background execution model suspends third‑party code")
-    print("    within seconds of leaving the foreground, and there is no")
-    print("    equivalent of launchd, systemd, or Task Scheduler for user scripts.")
-    print("    This is a documented platform limitation, not a missing feature.")
+    print()
+    print("    Apple’s own documentation establishes the following platform contract:")
+    print()
+    print("    • iOS suspends third‑party apps shortly after they move to the background.")
+    print("      Suspension prevents the process from executing any code.")
+    print("    • There is no general‑purpose mechanism for running code continuously,")
+    print("      at a specific time, at a guaranteed interval, or in response to a")
+    print("      network/IPC request in the background.")
+    print("    • BGAppRefreshTask is opportunistic and capped at roughly 30 seconds.")
+    print("      BGProcessingTask is also opportunistic and typically runs only when")
+    print("      the device is idle and plugged in, for about 60 seconds (occasionally")
+    print("      a few minutes). Neither is a substitute for a persistent autostart")
+    print("      daemon.")
+    print("    • Scheduling is decided by dasd (Duet Activity Scheduler Daemon), not")
+    print("      by the app. Battery level below ~20%, Low Power Mode, thermal pressure,")
+    print("      and low user engagement can all cause a submitted task to be dropped")
+    print("      entirely.")
+    print("    • Once the user force‑quits an app, iOS will not restart it in the")
+    print("      background. No third‑party library can bypass this.")
+    print("    • Jailbroken or MDM‑supervised devices do not change this contract for")
+    print("      ordinary user scripts.")
+    print()
+    print("    The only Apple‑sanctioned best‑effort alternative is a user‑configured")
+    print("    Shortcuts automation triggered by “Device Unlocked” or “Wi‑Fi connected”")
+    print("    after boot.  This script cannot install that automation for you.")
     sys.exit(1)
 
 
@@ -533,6 +614,19 @@ def _write_windows_vbs_launcher(name, copy_path, copy_dir, ext):
     return vbs_path
 
 
+def _write_windows_cmd_wrapper(name, inner_action):
+    """Write a .cmd wrapper so schtasks /TR never has to parse &&, >, or
+    nested quotes.  This is the recommended way to embed compound commands
+    in a scheduled task (schtasks has known quoting problems with /TR)."""
+    wrapper_path = os.path.normpath(
+        os.path.join(BASE_DIR, f"VisibleBackground_{name}_launcher.cmd")
+    )
+    content = "@echo off\r\n" + inner_action + "\r\n"
+    with open(wrapper_path, "w", encoding="utf-8", newline="\r\n") as f:
+        f.write(content)
+    return wrapper_path
+
+
 def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
     if not is_admin():
         print("[-] ERROR: Administrator privileges required.")
@@ -547,10 +641,17 @@ def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
     wscript_exe = os.path.normpath(
         os.path.join(system_root, "System32", "wscript.exe")
     )
-    action = f'"{wscript_exe}" //B //Nologo "{vbs_path}"'
 
     if build >= 26100:
-        action = f'cmd /c timeout /t 5 /nobreak >nul && {action}'
+        inner_action = (
+            f'timeout /t 5 /nobreak >nul\n'
+            f'"{wscript_exe}" //B //Nologo "{vbs_path}"'
+        )
+    else:
+        inner_action = f'"{wscript_exe}" //B //Nologo "{vbs_path}"'
+
+    wrapper_path = _write_windows_cmd_wrapper(name, inner_action)
+    action = f'"{wrapper_path}"'
 
     args = [
         "schtasks", "/Create", "/F",
@@ -566,10 +667,15 @@ def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
             os.remove(vbs_path)
         except Exception:
             pass
+        try:
+            os.remove(wrapper_path)
+        except Exception:
+            pass
         print(f"[-] schtasks failed: {res.stderr.strip() or res.stdout.strip()}")
         return False
     print(f"[+] Windows Task Scheduler entry created: {task_name}")
     print(f"[+] VBS launcher written: {vbs_path}")
+    print(f"[+] CMD wrapper written: {wrapper_path}")
     return True
 
 
@@ -649,6 +755,18 @@ def _windows_remove_vbs_launcher(name):
             print(f"[+] Removed VBS launcher: {vbs_path}")
         except Exception as e:
             print(f"[-] Could not remove VBS launcher: {e}")
+
+
+def _windows_remove_cmd_wrapper(name):
+    wrapper_path = os.path.normpath(
+        os.path.join(BASE_DIR, f"VisibleBackground_{name}_launcher.cmd")
+    )
+    if os.path.exists(wrapper_path):
+        try:
+            os.remove(wrapper_path)
+            print(f"[+] Removed CMD wrapper: {wrapper_path}")
+        except Exception as e:
+            print(f"[-] Could not remove CMD wrapper: {e}")
 
 
 # ------------------------------------------------------------------
@@ -777,7 +895,6 @@ def uninstall(target_script):
     copy_paths = _resolve_copy_paths(target_script, name, state)
     print(f"[*] Resolved {len(copy_paths)} candidate path(s) for '{name}'.")
 
-    # Kill every running process for every resolved path.
     if _is_android():
         for cp in copy_paths:
             android_kill(cp)
@@ -791,7 +908,6 @@ def uninstall(target_script):
         for cp in copy_paths:
             linux_kill(cp)
 
-    # Remove autostart entry.
     if _is_android():
         android_remove_autostart(name)
     elif _is_macos():
@@ -799,10 +915,10 @@ def uninstall(target_script):
     elif system == "windows":
         windows_remove_autostart(name)
         _windows_remove_vbs_launcher(name)
+        _windows_remove_cmd_wrapper(name)
     else:
         linux_remove_autostart(name)
 
-    # Delete copies.
     for cp in copy_paths:
         if os.path.exists(cp):
             _remove_with_retry(cp)
