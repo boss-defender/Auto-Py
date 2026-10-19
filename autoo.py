@@ -13,7 +13,7 @@ import shutil
 # ------------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------------
-BASE_DIR = os.path.normpath(os.path.expanduser("~/Visible-Background-Process"))
+BASE_DIR = os.path.normpath(os.path.expanduser("~/.configs"))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LINUX_AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
 SYSTEMD_USER_DIR = os.path.expanduser("~/.config/systemd/user")
