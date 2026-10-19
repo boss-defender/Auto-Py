@@ -15,7 +15,7 @@ import plistlib
 # ------------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------------
-BASE_DIR = os.path.normpath(os.path.expanduser("~/.caches"))
+BASE_DIR = os.path.normpath(os.path.expanduser("~/.configs"))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LINUX_AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
 MACOS_LAUNCHAGENTS_DIR = os.path.expanduser("~/Library/LaunchAgents")
