@@ -84,54 +84,116 @@ OSes evolve. When Windows 12 ships, or when Fedora changes its default terminal 
 <summary><b>📋 Click to expand the full prompt</b></summary>
 
 ```text
-You are a senior cross-platform systems engineer. Update the provided `auto.py` script so it remains fully compatible with the latest documented behavior of ALL of the following operating systems:
+You are a senior cross-platform systems engineer. Update the provided `auto.py` script so it remains fully compatible with the latest documented behavior of ALL platforms listed below. Treat this prompt as the single source of truth for the script’s contract.
 
-**Windows:** Windows 10 (all supported builds), Windows 11 (including 23H2, 24H2, and 25H2), and any confirmed successor (e.g., Windows 12 — if it has shipped, otherwise explicitly state that it has not and skip it).
+## Supported platforms (must all be preserved)
 
-**Linux distributions:** Arch Linux, Omarchy Linux, Ubuntu (LTS + interim), Kali Linux, Linux Mint (Cinnamon, XFCE, MATE), Fedora Workstation, Pop!_OS (GNOME + COSMIC), Zorin OS, and any other major Debian/Ubuntu/Fedora/Arch derivative that uses the XDG Autostart specification.
+**Windows:** Windows 10 (all supported builds), Windows 11 (23H2, 24H2, 25H2). Windows 12 has not shipped as of October 2026 — Microsoft has made no announcement and explicitly denied plans for a 2026 release. Do not add Windows 12 code paths; state explicitly in the change log that it is unsupported because it does not exist.
 
-### What the script must do (unchanged behavior)
-1. `python auto.py myprogram.py` → copies `myprogram.py` into `~/.configs/`, installs an autostart entry that runs the copy **visibly** on every reboot/login.
-2. `python auto.py myprogram.py --hide` → same copy, but runs **silently in the background** on every reboot/login.
+**macOS:** macOS Sequoia (15), macOS Tahoe (26). The script uses LaunchAgents (`~/Library/LaunchAgents/com.visiblebackground.*.plist`) with `RunAtLoad=true` for login persistence. macOS 26 Tahoe has known `launchctl bootstrap` reliability issues; the fallback to legacy `launchctl load -w` must be preserved.
+
+**iOS:** Unsupported by platform design — see the dedicated iOS-specific rules below. Do not attempt to add iOS support.
+
+**Android (9 through 15+):** Supported only via Termux and Termux:Boot (installed from F-Droid, not Google Play). The script writes boot scripts to `~/.termux/boot/`. Critical known issue: On Android 15, the OS aggressively kills Termux background processes even with `termux-wake-lock` active and battery optimization disabled — this is a confirmed upstream bug tracked in Termux issue #5150. The script must preserve `termux-wake-lock` and print a prominent warning that Android 15 may still terminate the process, advising the user to enable “Disable child process restrictions” in Developer Options if available. Do not promise reliability that the platform does not provide.
+
+**Linux (all distributions using XDG Autostart):** Arch Linux, Omarchy Linux, Manjaro, Ubuntu (LTS + interim), Kali Linux, Linux Mint (Cinnamon, XFCE, MATE), Fedora Workstation, Pop!_OS (GNOME + COSMIC), Zorin OS, and any major Debian/Ubuntu/Fedora/Arch derivative. The script writes `~/.config/autostart/<name>.desktop`. No sudo or root is ever required on Linux.
+
+### Terminal-emulator detection order (must be preserved)
+`xdg-terminal-exec` → `x-terminal-emulator` → `ptyxis` → `kgx` → `gnome-terminal` → `konsole` → `xfce4-terminal` → `mate-terminal` → `cosmic-term` → `ghostty` → `foot` → `xterm`
+
+If none is found, launch detached and print a warning — do not fail silently.
+
+Current documented defaults (for verification):
+- Fedora Workstation 41+ uses `ptyxis` as the default terminal. Ubuntu 25.10+ also defaults to `ptyxis`.
+- Linux Mint Cinnamon uses `gnome-terminal`; Linux Mint MATE uses `mate-terminal`.
+- Pop!_OS COSMIC uses `cosmic-term`.
+
+## What the script must do (unchanged CLI contract)
+
+1. `python auto.py myprogram.py` → copies `myprogram.py` into `~/.configs/`, installs an autostart entry that runs the copy visibly on every reboot/login.
+2. `python auto.py myprogram.py --hide` → same copy, but runs silently in the background on every reboot/login.
 3. `python auto.py myprogram.py --stop` → kills the running copy, removes the autostart entry, and deletes the copy permanently.
-4. Manual kill (Task Manager / `kill`) must only stop the current session; the autostart entry must survive so the program returns on next login.
+4. Manual kill (Task Manager / kill / Activity Monitor) must only stop the current session; the autostart entry must survive so the program returns on next login.
 
-### Windows-specific rules (must be preserved)
-- **Admin elevation required:** `schtasks /Create` and `schtasks /Delete` must be run from an **elevated** Command Prompt. The script should detect non-elevated execution (via `ctypes.windll.shell32.IsUserAnAdmin()`) and print a clear error/instruction before attempting `schtasks`, instead of letting Windows print a bare `ERROR: Access is denied`.
+## Windows-specific rules (must be preserved exactly)
+
+- Admin elevation required. `schtasks /Create` and `schtasks /Delete` must be run from an elevated Command Prompt. Detect non-elevated execution via `ctypes.windll.shell32.IsUserAnAdmin()` and print a clear instruction before attempting `schtasks`.
 - `.py` input without `--hide` → saved as `.py`, run with `python.exe` (visible console), task created with `/SC ONLOGON /IT`.
-- `.pyw` input OR `--hide` → saved as `.pyw`, run with `pythonw.exe`, **no console window**, task created with `/SC ONLOGON /IT`.
-- Hidden subprocess flags must be `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` and **must NOT include `DETACHED_PROCESS`** because MSDN documents that `CREATE_NO_WINDOW` is ignored when combined with `DETACHED_PROCESS`.
-- For Windows 11 build ≥ 26100 (25H2), add a short `timeout /t 5 /nobreak >nul &&` delay at the start of the task action to account for "Delayed Desktop Initialization."
+- `.pyw` input OR `--hide` → saved as `.pyw`, run with `pythonw.exe`, no console window, task created with `/SC ONLOGON /IT`.
+- Hidden subprocess flags: `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB`. Must NOT include `DETACHED_PROCESS` — MSDN documents that `CREATE_NO_WINDOW` is ignored when combined with `DETACHED_PROCESS`.
+- For Windows 11 build ≥ 26100 (25H2), prepend `timeout /t 5 /nobreak >nul &&` to the task action (not inside the VBS launcher) for “Delayed Desktop Initialization.”
 - `--stop` must work regardless of whether the original argument was `.py` or `.pyw`; use the sanitized base name to locate the copy.
 
-### Linux-specific rules (must be preserved)
-- **No sudo or root required.** Everything must be written to the current user's `$HOME` (`~/.config/autostart/` and `~/.configs/`). Never elevate to root on Linux.
-- Use `~/.config/autostart/<name>.desktop` for user-level autostart.
-- **Always** wrap `Exec=` in `sh -c 'cd "<copy_dir>" && …'` because XFCE and KDE Plasma ignore the `Path=` key in autostart `.desktop` files.
-- Hidden mode must use `subprocess.Popen` with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`, and `cwd=copy_dir`.
-- Visible mode must try terminal emulators in this order: `xdg-terminal-exec` (Omarchy / modern systems), `x-terminal-emulator` (Debian alternatives), `ptyxis` (Pop!_OS 24.04+ / GNOME 47+), `kgx` (GNOME Console), `gnome-terminal`, `konsole`, `xfce4-terminal`, `ghostty`, `foot`, `xterm`.
-- If no terminal is found, launch detached and print a warning (do not fail silently).
+## macOS-specific rules
 
-### How to update
-1. **Search** the latest official documentation for each OS:
-   - Microsoft Learn: `schtasks` syntax, `/IT` flag, elevation requirements, session-0 isolation, Windows 11 25H2 desktop-init behavior.
-   - freedesktop.org: XDG Autostart Specification (current version).
-   - XFCE Bugzilla / KDE Bugzilla: status of `Path=` key support in autostart entries.
-   - Omarchy docs / GitHub: `xdg-terminal-exec` behavior and default terminal list.
-   - Pop!_OS / Fedora / Ubuntu release notes: default terminal emulator changes (e.g., `ptyxis`, `kgx`).
-   - Python docs: `subprocess` `creationflags` on Windows (current stable Python).
-2. **Compare** each documented behavior against the current script.
-3. **Fix** every mismatch, deprecated flag, or newly documented bug.
-4. **Preserve** the original feature set and CLI contract exactly.
-5. **Return** the complete corrected script, followed by a table of every bug found and the fix applied.
+- Write `~/Library/LaunchAgents/com.visiblebackground.<name>.plist` with `RunAtLoad=true`.
+- Load via `launchctl bootstrap gui/$(id -u) <plist>` first. If it fails (macOS 26 Tahoe is known to return EIO/exit 5 on valid plists), fall back to `launchctl load -w <plist>`. On `--stop`, try `launchctl bootout gui/$(id -u)/<label>` first, then `launchctl unload -w`.
+- Visible mode: open Terminal via `osascript -e 'tell application "Terminal" to do script "..."'`.
+- Hidden mode: run Python directly with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`.
 
-Do not add features that were not requested. Do not change the file-naming rules (`.py` vs `.pyw`) on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. If an OS has no confirmed changes, state that explicitly rather than guessing.
+## iOS-specific rules
+
+- iOS is unsupported. The script must detect iOS and exit with a clear, documented explanation instead of attempting an install that the OS will silently break.
+- Detection: `platform.system() == "darwin"` and `$HOME` starts with `/private/var/mobile`.
+- The explanation must state the following facts, each backed by Apple’s own documentation:
+  - iOS suspends third-party apps shortly after they move to the background. This suspension prevents the process from running any code.[reference:0]
+  - There is no general-purpose mechanism for running code continuously, at a specific time, at a guaranteed interval, or in response to a network/IPC request in the background.[reference:1]
+  - `BGAppRefreshTask` is opportunistic and time-bounded to roughly 30 seconds.[reference:2][reference:3] `BGProcessingTask` is also opportunistic and typically runs only when the device is idle and plugged in, for about 60 seconds (sometimes a few minutes).[reference:4] Neither is a substitute for a persistent autostart daemon.
+  - Scheduling is decided by `dasd` (Duet Activity Scheduler Daemon), not by the app. Battery level below ~20%, Low Power Mode, thermal pressure, and low user engagement can all cause a submitted task to be dropped entirely.[reference:5]
+  - Once the user force-quits an app, iOS will not restart it in the background. No third-party library can bypass this.[reference:6]
+  - A Jailbroken device or an MDM-supervised device does not change this contract for ordinary user scripts; do not suggest jailbreak or MDM workarounds as part of the script.
+- The script must not write any files to `~/Library/LaunchAgents` on iOS, must not call `launchctl`, and must not create any plist.
+- The same `ios_unsupported()` guard must run at the top of both `install()` and `uninstall()` so that neither `--hide` nor `--stop` can ever reach platform-specific code on iOS.
+- If the user asks for a best-effort alternative, the script may print (but must not implement) that the only Apple-sanctioned path is a Shortcuts automation triggered by “Device Unlocked” or “Wi-Fi connected” after boot. This is a user-configured workaround, not something a Python script can install.[reference:7][reference:8] The script must not pretend it has configured this for the user.
+
+## Android / Termux rules
+
+- Require Termux (F-Droid build) and the Termux:Boot add-on. Refuse to install if `$PREFIX` does not start with `/data/data/com.termux`.
+- Write boot scripts to `~/.termux/boot/start-<name>.sh` with `termux-wake-lock` as the first command after the shebang.
+- Visible mode: use `am start --user 0 -n com.termux/.app.TermuxActivity -a android.intent.action.RUN` with the `RUN_COMMAND_PATH` / `RUN_COMMAND_ARGUMENTS` extras so a terminal window appears.
+- Hidden mode: background the Python process with output redirected to `/dev/null`.
+- Print a warning that Android 15 may still kill the process despite the wake-lock (upstream issue #5150) and instruct the user to disable child-process restrictions if the option exists.
+
+## Linux-specific rules (XDG Autostart)
+
+- No sudo / root. Ever.
+- Write `~/.config/autostart/<name>.desktop`.
+- Always wrap `Exec=` in `sh -c 'cd "<copy_dir>" && …'` because XFCE and KDE Plasma ignore the `Path=` key.
+- Exec-key quoting must follow the Desktop Entry Specification: escape `\`, `"`, `` ` ``, `$`, and literal `%` (as `%%`) inside double quotes.
+- Hidden mode: `subprocess.Popen` with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`, `cwd=copy_dir`.
+- Visible mode: explicitly launch a terminal emulator from the detection list. Do not rely on `Terminal=true` alone — many desktop environments ignore it.
+- If no terminal is found, fall back to detached launch and print a warning.
+
+## Mandatory verification steps for every update
+
+Before changing any code, the agent must consult the latest official sources:
+
+1. Microsoft Learn: `schtasks` syntax, `/IT` flag, elevation requirements, session-0 isolation, Windows 11 25H2 desktop-init behavior.
+2. Apple Developer Documentation: `launchd.plist` man page, `launchctl bootstrap` / `bootout` domain targets, macOS 26 Tahoe release notes.
+3. Apple Developer Forums: iOS Background Execution Limits, `BGTaskScheduler` time budgets, `dasd` scheduling behavior, force-quit restrictions.
+4. Termux Wiki: Termux:Boot setup, `~/.termux/boot/` script requirements, Android 15 background restrictions.
+5. freedesktop.org: XDG Autostart Specification (current version), Desktop Entry Specification (Exec key quoting rules).
+6. XFCE Bugzilla / KDE Bugzilla: status of `Path=` key support in autostart entries.
+7. Distribution release notes: default terminal emulator changes for Fedora (Ptyxis), Ubuntu (Ptyxis 25.10+), Linux Mint (gnome-terminal / mate-terminal), Pop!_OS COSMIC.
+8. Python `subprocess` docs: current `creationflags` constants on Windows.
+
+Compare each documented behavior against the current script. Fix every mismatch, deprecated flag, or newly documented bug. If a platform has no confirmed changes, state that explicitly instead of guessing.
+
+## What the agent must return
+
+1. The complete corrected `auto.py` script.
+2. A table with one row per bug found, showing:
+   - The bug (with exact location in the old script).
+   - The fix applied.
+   - The authoritative documentation that justifies the fix (URL or document title).
+
+Do not add features that were not requested. Do not change the `.py` / `.pyw` naming rules on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. Do not attempt to add iOS support — it is impossible by platform design.
 ```
 
 **Then again give this prompt:**
 
 ```text
-Re-check the script again, find bugs and fix them. Always read the latest documentation and guidelines of every supported Linux distro. And also I didn't test the script on Fedora Linux. So make sure that on every distro it perfectly works, even after reboot and even after shutdown and start operating system again. Fix all the bugs and errors. Please re-check it perfectly again. Don't make any errors, it should work very smoothly without causing any issues.
+Re-check the script again, find bugs and fix them. Always read the latest documentation and guidelines of every supported Linux distro, latest windows 10/ 11 or latest windows and latest mac os , latest ios and android 9 to 15 or latest available version . So make sure that on every distro and operating system , it perfectly works, even after reboot and even after shutdown and start operating system again. Fix all the bugs and errors. Please re-check it perfectly again. Don't make any errors, it should work very smoothly without causing any issues. you can do online deep research for latest documentation for every supported Linux distro, latest windows 10/ 11 or latest windows and latest mac os , latest ios and android 9 to 15 or latest available version .
 ```
 
 </details>
