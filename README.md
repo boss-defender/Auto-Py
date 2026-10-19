@@ -128,6 +128,8 @@ Show a terminal window, or run silently with no UI.
 **📦 Self-contained**
 Copies your script to `~/.configs/` — keeps running even if the original is deleted.
 
+**You can change .configs to any folder name like .msdxs or visible-folder etc**
+
 **🐍 `.py` / `.pyw` aware on Windows**
 Automatically swaps to `pythonw.exe` + `.pyw` when `--hide` is used.
 
