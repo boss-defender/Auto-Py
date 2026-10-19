@@ -24,16 +24,16 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 > **Windows users — run `cmd.exe` as Administrator.**
 > `auto.py` uses Task Scheduler (`schtasks`), which returns an **`ERROR: Access is denied`** (or `ERRO`) if the terminal is not elevated. Right-click **Command Prompt → Run as administrator** before running any `auto.py` command.
 
-> [!WARNING]
+> [!NOTE]
 > **Linux users — no `sudo` or root needed.** Everything runs at the user level via XDG Autostart.
 
-> [!WARNING]
+> [!NOTE]
 > **macOS users — no `sudo` or root needed.** LaunchAgents run at the user level in `~/Library/LaunchAgents/`. Running `auto.py` with `sudo` loads the job into the `system` domain instead of your GUI login session, where it will not behave as expected. The first time the script runs from a LaunchAgent, macOS may prompt for privacy-protected resources (Files & Folders, Accessibility, Automation) — approve the prompt under **System Settings → Privacy & Security**, otherwise the script starts but silently fails on those resources.
 
-> [!WARNING]
+> [!NOTE]
 > **iOS users — unsupported by platform design.** `auto.py` detects iOS (`$HOME` starts with `/private/var/mobile`) and exits with a full explanation; it never writes a plist, never touches `~/Library/LaunchAgents`, and never calls `launchctl`. No elevation, entitlement, or provisioning profile can make a user script run persistently in the background on iOS.
 
-> [!WARNING]
+> [!NOTE]
 > **Android users — Termux + Termux:Boot from F-Droid are required, plus two settings.** Install **Termux** and **Termux:Boot** from **F-Droid only** (mixing F-Droid and Play Store builds causes signature failures and breaks boot execution), open Termux:Boot **once** so Android registers it, and disable **battery optimisation for both apps**. On **Android 14+**, also enable **Settings → System → Developer options → Disable child process restrictions** (the setting survives reboots, but switching Developer options off re-arms the phantom process killer); on **Android 12–13** there is no toggle — use the documented `adb` commands from the Termux wiki if the process dies with signal 9. On **Android 15** the OS may still terminate the process despite all of the above (Termux issue #5150); the Developer-options toggle is the only mitigation on devices that expose it.
 
 > **Tested on: Windows, Arch linux , Kali linux , Fedora , Linux mint**
