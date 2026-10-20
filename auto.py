@@ -18,6 +18,7 @@ import plistlib
 BASE_DIR = os.path.normpath(os.path.expanduser("~/.configs"))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 LINUX_AUTOSTART_DIR = os.path.expanduser("~/.config/autostart")
+LINUX_SYSTEMD_USER_DIR = os.path.expanduser("~/.config/systemd/user")
 MACOS_LAUNCHAGENTS_DIR = os.path.expanduser("~/Library/LaunchAgents")
 TERMUX_BOOT_DIR = os.path.expanduser("~/.termux/boot")
 
@@ -46,6 +47,14 @@ def _is_termux():
     return os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
 
 
+def _is_linux_headless():
+    """True when no graphical session is available (Ubuntu Server, RHEL Server,
+    SSH-only hosts).  XDG Autostart requires DISPLAY or WAYLAND_DISPLAY."""
+    if platform.system().lower() != "linux":
+        return False
+    return not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY")
+
+
 # ------------------------------------------------------------------
 # Helpers (shared)
 # ------------------------------------------------------------------
@@ -53,7 +62,12 @@ def ensure_directory():
     os.makedirs(BASE_DIR, exist_ok=True)
     if platform.system().lower() == "linux":
         os.makedirs(LINUX_AUTOSTART_DIR, exist_ok=True)
+        os.makedirs(LINUX_SYSTEMD_USER_DIR, exist_ok=True)
     elif _is_macos():
+        # Standard permissions for ~/Library/LaunchAgents are 0755; launchd
+        # does not require 0700 and happily scans a 0755 directory owned by
+        # the user.  Do not force-chmod a directory that may already hold the
+        # user's other LaunchAgents.
         os.makedirs(MACOS_LAUNCHAGENTS_DIR, exist_ok=True)
 
 
@@ -68,8 +82,16 @@ def load_state():
 
 
 def save_state(state):
-    with open(STATE_FILE, "w") as f:
+    # Write atomically so an interrupted run never leaves a truncated,
+    # unparseable state.json behind (which load_state would silently discard,
+    # losing the record of every installed program).
+    os.makedirs(BASE_DIR, exist_ok=True)
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(state, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, STATE_FILE)
 
 
 def sanitize_name(name):
@@ -81,36 +103,86 @@ def sanitize_name(name):
     return re.sub(r"[^a-zA-Z0-9\-_]", "-", base).lower() or "program"
 
 
-def _escape_exec_value(s):
-    """Escape for Desktop Entry Exec key (Linux).
-    Per the Desktop Entry Specification, within double quotes the characters
-    `` ` ``, `` $ ``, `` " `` and `` \\ `` must be escaped.  Literal `` % ``
-    must be written as `` %% `` so it is not interpreted as a field code."""
-    s = s.replace("\\", "\\\\")
-    s = s.replace('"', '\\"')
-    s = s.replace("`", "\\`")
-    s = s.replace("$", "\\$")
-    s = s.replace("%", "%%")
-    return s
-
-
 def _quote_exec_arg(arg):
-    """Quote a single argument for the Desktop Entry Exec key.
-    Always use double quotes; escape all characters the spec requires."""
-    arg = arg.replace("\\", "\\\\")
-    arg = arg.replace('"', '\\"')
-    arg = arg.replace("`", "\\`")
-    arg = arg.replace("$", "\\$")
+    """Quote one argument for the Desktop Entry Exec key.
+
+    The freedesktop.org Desktop Entry Specification (1.5) requires the
+    general string escape rule (backslash -> \\\\) to be applied *before*
+    the Exec quoting rule.  The resulting literal sequences are:
+
+        \\  ->  \\\\\\\\   (four backslashes)
+        $   ->  \\\\$     (two backslashes + dollar)
+        `   ->  \\\\`     (two backslashes + backtick)
+        "   ->  \\\\"     (two backslashes + double quote)
+        %   ->  %%       (literal percent)
+    """
+    arg = arg.replace("\\", "\\\\\\\\")   # 4 backslashes
+    arg = arg.replace('"', '\\\\"')       # 2 backslashes + "
+    arg = arg.replace("`", "\\\\`")       # 2 backslashes + `
+    arg = arg.replace("$", "\\\\$")       # 2 backslashes + $
     arg = arg.replace("%", "%%")
     return f'"{arg}"'
 
 
 def _build_exec_line(cmd_list):
-    """Build a spec-compliant Exec= value from a command list.
-    Do NOT use shlex.join here: it emits single quotes, which the Desktop
-    Entry Exec grammar does not treat as quoting (it only recognises double
-    quotes), so single quotes would be passed literally to the shell."""
+    """Build a spec-compliant Exec= value from a command list."""
     return " ".join(_quote_exec_arg(arg) for arg in cmd_list)
+
+
+def _systemd_quote(arg):
+    """Quote an argument for a systemd unit file.
+    systemd uses double-quote quoting with backslash escapes; literal % must be
+    written as %% to avoid specifier expansion."""
+    arg = str(arg).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{arg}"'
+
+
+def _applescript_quote(s):
+    """Escape a string for inclusion inside an AppleScript double-quoted string."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _linux_user_env():
+    """Return an environment suitable for `systemctl --user` and `loginctl`.
+    XDG_RUNTIME_DIR is required; set a sensible default when missing."""
+    env = os.environ.copy()
+    if "XDG_RUNTIME_DIR" not in env:
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+    return env
+
+
+def _run(cmd, **kwargs):
+    """subprocess.run that never raises FileNotFoundError.
+
+    Many optional system binaries (systemctl, loginctl, crontab, pgrep, am)
+    are absent on minimal or non-systemd distros (Alpine, Void, Gentoo/OpenRC,
+    Devuan, bare containers, WSL).  Calling them with a plain subprocess.run
+    aborts the whole install/uninstall with an unhandled traceback.  This
+    wrapper returns a synthetic failed CompletedProcess instead, so callers
+    can fall back gracefully on the (non-zero) return code."""
+    kwargs.setdefault("capture_output", True)
+    kwargs.setdefault("text", True)
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except FileNotFoundError:
+        exe = cmd[0] if cmd else "command"
+        return subprocess.CompletedProcess(cmd, 127, "", f"{exe}: not found")
+    except OSError as e:
+        return subprocess.CompletedProcess(cmd, 126, "", str(e))
+
+
+def _has_binary(name):
+    return shutil.which(name) is not None
+
+
+def _has_systemd():
+    """True only when a running systemd instance is actually available.
+
+    `shutil.which('systemctl')` alone is not enough: the binary can exist on a
+    host booted with another init (OpenRC, runit, SysV, WSL without systemd),
+    where every `systemctl` call fails.  /run/systemd/system exists only when
+    systemd is PID 1 and running."""
+    return _has_binary("systemctl") and os.path.isdir("/run/systemd/system")
 
 
 def is_admin():
@@ -149,10 +221,14 @@ def _python_executable(ext):
 
 
 # ------------------------------------------------------------------
-# Linux — XDG Autostart
+# Linux — XDG Autostart (desktop) and systemd user service (headless/server)
 # ------------------------------------------------------------------
 def linux_desktop_path(name):
     return os.path.join(LINUX_AUTOSTART_DIR, f"{name}.desktop")
+
+
+def linux_systemd_unit_path(name):
+    return os.path.join(LINUX_SYSTEMD_USER_DIR, f"{name}.service")
 
 
 def linux_create_autostart(copy_path, copy_dir, name, hidden):
@@ -207,8 +283,8 @@ def _find_linux_terminal(python_exe, copy_path, copy_dir):
         ["kgx", "--", "sh", "-c", inner],
         ["gnome-terminal", "--", "sh", "-c", inner],
         ["konsole", "-e", "sh", "-c", inner],
-        ["xfce4-terminal", "-e", f'sh -c "{inner}"'],
-        ["mate-terminal", "-e", f'sh -c "{inner}"'],
+        ["xfce4-terminal", "-x", "sh", "-c", inner],
+        ["mate-terminal", "-x", "sh", "-c", inner],
         ["cosmic-term", "-e", "sh", "-c", inner],
         ["ghostty", "-e", "sh", "-c", inner],
         ["foot", "-e", "sh", "-c", inner],
@@ -220,8 +296,31 @@ def _find_linux_terminal(python_exe, copy_path, copy_dir):
     return None
 
 
-def linux_launch_now(copy_path, copy_dir, hidden):
-    python_exe = sys.executable
+def linux_launch_now(copy_path, copy_dir, name, hidden):
+    python_exe = sys.executable or "/usr/bin/python3"
+
+    if _is_linux_headless():
+        if _has_systemd():
+            env = _linux_user_env()
+            res = _run(
+                ["systemctl", "--user", "start", f"{name}.service"],
+                env=env,
+            )
+            if res.returncode == 0:
+                print("[+] Started now via systemd user service (headless/background).")
+                return
+            print(f"[!] systemctl --user start failed: "
+                  f"{(res.stderr or '').strip() or (res.stdout or '').strip()}")
+        subprocess.Popen(
+            [python_exe, copy_path],
+            cwd=copy_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        print("[+] Started now detached (headless fallback).")
+        return
+
     if hidden:
         subprocess.Popen(
             [python_exe, copy_path],
@@ -270,7 +369,13 @@ def linux_find_pids(copy_path):
     return pids
 
 
-def linux_kill(copy_path):
+def linux_kill(copy_path, name=None):
+    if name and _has_systemd():
+        env = _linux_user_env()
+        _run(
+            ["systemctl", "--user", "stop", f"{name}.service"],
+            env=env,
+        )
     for pid in linux_find_pids(copy_path):
         try:
             os.kill(pid, signal.SIGTERM)
@@ -279,6 +384,238 @@ def linux_kill(copy_path):
             pass
         except Exception as e:
             print(f"[-] Could not kill PID {pid}: {e}")
+
+
+# ------------------------------------------------------------------
+# Linux — systemd user service (headless servers: Ubuntu Server, RHEL Server)
+# ------------------------------------------------------------------
+def linux_create_systemd_service(copy_path, copy_dir, name, hidden):
+    """Install a systemd user unit.  Used on headless servers where XDG
+    Autostart never runs because there is no graphical session."""
+    _check_ubuntu_2404_systemd255()
+
+    python_exe = sys.executable or "/usr/bin/python3"
+    os.makedirs(LINUX_SYSTEMD_USER_DIR, exist_ok=True)
+
+    linux_enable_linger()
+
+    unit_path = linux_systemd_unit_path(name)
+
+    exec_start = f"{_systemd_quote(python_exe)} {_systemd_quote(copy_path)}"
+    working_dir = _systemd_quote(copy_dir)
+
+    content = f"""[Unit]
+Description=VisibleBackground {name}
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory={working_dir}
+ExecStart={exec_start}
+Restart=on-failure
+RestartSec=5
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=default.target
+"""
+    with open(unit_path, "w") as f:
+        f.write(content)
+    os.chmod(unit_path, 0o644)
+    print(f"[+] systemd user unit written: {unit_path}")
+
+    env = _linux_user_env()
+    _run(
+        ["systemctl", "--user", "daemon-reload"],
+        env=env,
+    )
+    res = _run(
+        ["systemctl", "--user", "enable", "--now", f"{name}.service"],
+        env=env,
+    )
+    if res.returncode != 0:
+        print(f"[!] systemctl --user enable --now failed: "
+              f"{(res.stderr or '').strip() or (res.stdout or '').strip()}")
+        _run(
+            ["systemctl", "--user", "enable", f"{name}.service"],
+            env=env,
+        )
+        _run(
+            ["systemctl", "--user", "start", f"{name}.service"],
+            env=env,
+        )
+
+
+def _check_ubuntu_2404_systemd255():
+    """Print a warning for Ubuntu 24.04 with systemd 255 where logind's GC
+    may kill user@<uid>.service on last logout despite Linger=yes.
+    See Launchpad bug #2163239 and systemd issue #43361.
+    This is best-effort and never fails the install."""
+    try:
+        os_release_path = "/etc/os-release"
+        if not os.path.exists(os_release_path):
+            return
+        info = {}
+        with open(os_release_path) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    info[k] = v.strip('"')
+        if info.get("ID") != "ubuntu":
+            return
+        if not info.get("VERSION_ID", "").startswith("24.04"):
+            return
+
+        res = _run(["systemctl", "--version"])
+        if res.returncode != 0 or not res.stdout:
+            return
+        m = re.search(r"systemd\s+(\d+)", res.stdout)
+        if not m or m.group(1) != "255":
+            return
+
+        print()
+        print("[!] Ubuntu 24.04 with systemd 255 detected.")
+        print("    A known logind regression (Launchpad bug #2163239,")
+        print("    systemd issue #43361) may kill the user service manager")
+        print("    (user@<uid>.service) on the last logout even when Linger=yes.")
+        print("    This can prevent the service from surviving logout or reboot.")
+        print("    Verify with:")
+        print("      loginctl show-user \"$USER\" -p Linger")
+        print("    If the service disappears after logout, apply the documented")
+        print("    workaround in /etc/systemd/logind.conf (requires root):")
+        print("      UserStopDelaySec=infinity")
+        print("      KillUserProcesses=no")
+        print("    Then restart logind:")
+        print("      sudo systemctl restart systemd-logind")
+        print("    Do not edit /etc/systemd/logind.conf automatically.")
+        print()
+    except Exception:
+        pass
+
+
+def linux_enable_linger():
+    """Enable linger so the user service starts at boot without a login.
+    Self-linger is permitted by default on systemd; fall back to a
+    non-interactive sudo call, then print an actionable warning."""
+    env = _linux_user_env()
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or str(os.getuid())
+
+    res = _run(
+        ["loginctl", "enable-linger"],
+        env=env,
+    )
+    if res.returncode == 0:
+        print("[+] loginctl enable-linger succeeded (self).")
+        return
+
+    res = _run(
+        ["sudo", "-n", "loginctl", "enable-linger", user],
+        env=env,
+    )
+    if res.returncode == 0:
+        print(f"[+] loginctl enable-linger {user} succeeded via sudo -n.")
+        return
+
+    print("[!] Could not enable linger automatically.")
+    print("    Without linger, the systemd user service starts on first login,")
+    print("    not at boot.  Run this once with an administrator account:")
+    print(f"      sudo loginctl enable-linger {user}")
+
+
+def linux_remove_systemd_service(name):
+    unit_path = linux_systemd_unit_path(name)
+    if _has_systemd():
+        env = _linux_user_env()
+        _run(
+            ["systemctl", "--user", "stop", f"{name}.service"],
+            env=env,
+        )
+        _run(
+            ["systemctl", "--user", "disable", f"{name}.service"],
+            env=env,
+        )
+    if os.path.exists(unit_path):
+        os.remove(unit_path)
+        print(f"[+] Removed systemd user unit: {unit_path}")
+    if _has_systemd():
+        _run(
+            ["systemctl", "--user", "daemon-reload"],
+            env=_linux_user_env(),
+        )
+
+
+# ------------------------------------------------------------------
+# Linux — cron @reboot fallback (non-systemd servers: Alpine/OpenRC, Void/runit,
+# Gentoo/OpenRC, Devuan/SysV, bare containers).  Used when the host is headless
+# AND has no running systemd, so there is neither an XDG session nor a user
+# service manager to start the program at boot.
+# ------------------------------------------------------------------
+def _cron_marker(name):
+    return f"# VisibleBackground {name}"
+
+
+def linux_create_cron_autostart(copy_path, copy_dir, name):
+    """Add an `@reboot` crontab line so the program starts at every boot.
+
+    Returns True on success.  Requires a crontab binary and a running cron
+    daemon; when crontab is missing, prints manual instructions and returns
+    False so the caller can still launch the program for this session."""
+    if not _has_binary("crontab"):
+        print("[!] No systemd and no crontab found on this host.")
+        print("    Cannot register a boot entry automatically.  To start the")
+        print("    program at boot, add an init/rc service for your system that")
+        print("    runs:")
+        print(f"      cd {shlex.quote(copy_dir)} && "
+              f"{shlex.quote(sys.executable or 'python3')} {shlex.quote(copy_path)}")
+        return False
+
+    python_exe = sys.executable or "/usr/bin/python3"
+    marker = _cron_marker(name)
+    line = (
+        f"@reboot cd {shlex.quote(copy_dir)} && "
+        f"{shlex.quote(python_exe)} {shlex.quote(copy_path)} "
+        f"> /dev/null 2>&1  {marker}"
+    )
+
+    existing = _run(["crontab", "-l"])
+    lines = []
+    if existing.returncode == 0 and existing.stdout:
+        # Drop any prior entry for this same name so re-install is idempotent.
+        lines = [ln for ln in existing.stdout.splitlines()
+                 if marker not in ln]
+    lines.append(line)
+    new_crontab = "\n".join(lines) + "\n"
+
+    res = _run(["crontab", "-"], input=new_crontab)
+    if res.returncode == 0:
+        print(f"[+] cron @reboot entry installed for '{name}'.")
+        if not os.path.isdir("/run/systemd/system"):
+            print("[!] Make sure the cron daemon is enabled and started at boot")
+            print("    (e.g. `rc-update add cron` + `rc-service cron start` on")
+            print("    OpenRC, or `sv enable cron` on runit).")
+        return True
+
+    print(f"[!] Could not write crontab: "
+          f"{(res.stderr or '').strip() or (res.stdout or '').strip()}")
+    return False
+
+
+def linux_remove_cron_autostart(name):
+    if not _has_binary("crontab"):
+        return
+    marker = _cron_marker(name)
+    existing = _run(["crontab", "-l"])
+    if existing.returncode != 0 or not existing.stdout:
+        return
+    kept = [ln for ln in existing.stdout.splitlines() if marker not in ln]
+    if len(kept) == len(existing.stdout.splitlines()):
+        return  # nothing of ours present
+    new_crontab = ("\n".join(kept) + "\n") if kept else ""
+    res = _run(["crontab", "-"], input=new_crontab)
+    if res.returncode == 0:
+        print(f"[+] Removed cron @reboot entry for '{name}'.")
 
 
 # ------------------------------------------------------------------
@@ -299,14 +636,19 @@ def macos_create_autostart(copy_path, copy_dir, name, hidden):
     if hidden:
         program_args = [python_exe, copy_path]
     else:
+        # Terminal windows opened by `do script` start in the user's home
+        # directory, NOT the plist's WorkingDirectory.  The cd is required
+        # so the Python process runs with the intended working directory.
+        shell_command = (
+            f"cd {shlex.quote(copy_dir)} && "
+            f"{shlex.quote(python_exe)} {shlex.quote(copy_path)}"
+        )
         script = (
             f'tell application "Terminal" to do script '
-            f'"{python_exe} {shlex.quote(copy_path)}"'
+            f'"{_applescript_quote(shell_command)}"'
         )
         program_args = ["/usr/bin/osascript", "-e", script]
 
-    # launchd does NOT create the parent directory of StandardOutPath /
-    # StandardErrorPath.  Ensure it exists before writing the plist.
     os.makedirs(BASE_DIR, exist_ok=True)
 
     plist = {
@@ -326,9 +668,16 @@ def macos_create_autostart(copy_path, copy_dir, name, hidden):
     print(f"[+] macOS LaunchAgent written: {plist_path}")
 
     uid = os.getuid()
-    loaded = False
 
-    # 1) Modern bootstrap (preferred)
+    # Bootout any existing instance first.  On macOS 26 Tahoe, `bootstrap`
+    # returns EIO/exit 5 if the label is already loaded or if a stale job
+    # exists, so bootout is mandatory before re-bootstrapping.
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{uid}/{label}"],
+        capture_output=True, text=True,
+    )
+
+    loaded = False
     res = subprocess.run(
         ["launchctl", "bootstrap", f"gui/{uid}", plist_path],
         capture_output=True, text=True,
@@ -336,7 +685,6 @@ def macos_create_autostart(copy_path, copy_dir, name, hidden):
     if res.returncode == 0:
         loaded = True
     else:
-        # 2) macOS 26 Tahoe known EIO/exit-5 fallback
         print(f"[!] launchctl bootstrap failed: "
               f"{res.stderr.strip() or res.stdout.strip()}; "
               f"falling back to launchctl load -w")
@@ -344,7 +692,6 @@ def macos_create_autostart(copy_path, copy_dir, name, hidden):
             ["launchctl", "load", "-w", plist_path],
             capture_output=True, text=True,
         )
-        # macOS 26 can return 0 while stderr still reports "Load failed: 5"
         load_failed = (
             res.returncode != 0
             or "failed" in res.stderr.lower()
@@ -392,9 +739,15 @@ def macos_launch_now(copy_path, copy_dir, hidden):
         )
         print("[+] Started now (hidden/background).")
     else:
+        # Terminal windows opened by `do script` start in the user's home
+        # directory, so cd to the intended working directory explicitly.
+        shell_command = (
+            f"cd {shlex.quote(copy_dir)} && "
+            f"{shlex.quote(python_exe)} {shlex.quote(copy_path)}"
+        )
         script = (
             f'tell application "Terminal" to do script '
-            f'"{python_exe} {shlex.quote(copy_path)}"'
+            f'"{_applescript_quote(shell_command)}"'
         )
         subprocess.Popen(["osascript", "-e", script])
         print("[+] Started now in Terminal (visible).")
@@ -462,9 +815,11 @@ def android_create_autostart(copy_path, copy_dir, name, hidden):
             f"{inner} > /dev/null 2>&1 &\n"
         )
     else:
-        # Use the documented RUN_COMMAND intent.  The previous use of
-        # android.intent.action.RUN was incorrect and does not start a
-        # foreground terminal session.
+        # Visible/foreground run via the documented Termux RUN_COMMAND API.
+        # The command is delivered to RunCommandService (an exported service),
+        # NOT to TermuxActivity with a made-up android.intent.action.RUN, which
+        # Termux never handled.  BACKGROUND=false opens a foreground terminal
+        # session.  Requires `allow-external-apps=true` in termux.properties.
         script_content = (
             "#!/data/data/com.termux/files/usr/bin/sh\n"
             "termux-wake-lock\n"
@@ -484,6 +839,10 @@ def android_create_autostart(copy_path, copy_dir, name, hidden):
     print("[!] Make sure Termux:Boot is installed and has been opened once.")
     print("[!] Disable battery optimisation for Termux and Termux:Boot.")
     print("[!] Grant Termux the ‘Draw over other apps’ permission on Android 10+")
+    if not hidden:
+        print("[!] Visible mode uses the Termux RUN_COMMAND API, which needs")
+        print("    `allow-external-apps=true` in ~/.termux/termux.properties.")
+        print("    If the window does not open at boot, use --hide instead.")
 
 
 def android_remove_autostart(name):
@@ -509,8 +868,8 @@ def android_launch_now(copy_path, copy_dir, hidden):
         )
         print("[+] Started now (hidden/background).")
     else:
-        subprocess.Popen(
-            [
+        try:
+            subprocess.Popen([
                 "am", "startservice", "--user", "0",
                 "-n", "com.termux/com.termux.app.RunCommandService",
                 "-a", "com.termux.RUN_COMMAND",
@@ -518,9 +877,19 @@ def android_launch_now(copy_path, copy_dir, hidden):
                 "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", copy_path,
                 "--es", "com.termux.RUN_COMMAND_WORKDIR", copy_dir,
                 "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
-            ]
-        )
-        print("[+] Started now in a new visible Termux session.")
+            ])
+            print("[+] Started now in a new visible Termux session.")
+        except FileNotFoundError:
+            # `am` missing: fall back to a plain background launch so the
+            # program still runs this session.
+            subprocess.Popen(
+                [python_exe, copy_path],
+                cwd=copy_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            print("[!] 'am' not found; started in background instead.")
 
 
 def android_find_pids(copy_path):
@@ -643,8 +1012,17 @@ def windows_create_autostart(copy_path, copy_dir, name, hidden, ext):
     )
 
     if build >= 26100:
+        # Windows 11 24H2 (26100) and 25H2 (26200) introduce delayed desktop
+        # initialization.  A short delay in the task action avoids racing the
+        # shell.  Keep this in the CMD wrapper, NOT inside the VBS launcher.
+        #
+        # Do NOT use `timeout` here: timeout reads stdin and aborts with
+        # "ERROR: Input redirection is not supported" when run by Task
+        # Scheduler, which gives the process no console input handle.  `ping`
+        # with a loopback count is the portable, console-less way to sleep
+        # ~5 s (one immediate reply + 5 one-second gaps).
         inner_action = (
-            f'timeout /t 5 /nobreak >nul\n'
+            f'ping -n 6 127.0.0.1 >nul & '
             f'"{wscript_exe}" //B //Nologo "{vbs_path}"'
         )
     else:
@@ -866,18 +1244,60 @@ def install(target_script, hidden):
         copy_dir = BASE_DIR
         shutil.copy2(target_script, copy_path)
         print(f"[+] Copied '{target_script}' → '{copy_path}'")
-        linux_create_autostart(copy_path, copy_dir, name, hidden)
-        linux_launch_now(copy_path, copy_dir, hidden)
+
+        if _is_linux_headless():
+            if _has_systemd():
+                if not hidden:
+                    print("[!] Headless Linux detected: no DISPLAY/WAYLAND_DISPLAY.")
+                    print("    Visible terminal mode is unavailable; installing in")
+                    print("    background mode as a systemd user service.")
+                linux_create_systemd_service(copy_path, copy_dir, name, hidden=True)
+                linux_mechanism = "systemd"
+            else:
+                if not hidden:
+                    print("[!] Headless Linux detected: no DISPLAY/WAYLAND_DISPLAY.")
+                print("[!] No running systemd found; using a cron @reboot entry")
+                print("    for boot persistence (Alpine/OpenRC, Void/runit, etc.).")
+                linux_create_cron_autostart(copy_path, copy_dir, name)
+                linux_mechanism = "cron"
+            linux_launch_now(copy_path, copy_dir, name, hidden=True)
+        else:
+            linux_create_autostart(copy_path, copy_dir, name, hidden)
+            linux_mechanism = "xdg"
+            linux_launch_now(copy_path, copy_dir, name, hidden)
     else:
         print(f"[-] Unsupported OS: {system}")
         sys.exit(1)
+
+    # Record the platform and the mechanism actually used.  Order matters:
+    # Android reports platform.system() == "linux" and is usually headless,
+    # so it MUST be classified before the generic Linux (xdg/systemd)
+    # branches — otherwise a Termux install is mislabelled as a systemd
+    # service.  Also record the *effective* hidden mode: a headless host has
+    # no terminal, so it is always installed in background regardless of the
+    # --hide flag the user passed.
+    if _is_android():
+        plat, mechanism, effective_hidden = "android", "termux-boot", hidden
+    elif _is_macos():
+        plat, mechanism, effective_hidden = "macos", "launchagent", hidden
+    elif system == "windows":
+        plat, mechanism, effective_hidden = "windows", "task", hidden
+    elif system == "linux":
+        plat = "linux"
+        # linux_mechanism is set in the install branch above ("xdg", "systemd"
+        # or "cron") so the recorded mechanism matches what was actually used.
+        mechanism = linux_mechanism
+        effective_hidden = True if _is_linux_headless() else hidden
+    else:
+        plat, mechanism, effective_hidden = system, "unknown", hidden
 
     state = load_state()
     state[name] = {
         "source": os.path.abspath(target_script),
         "copy": copy_path,
-        "hidden": hidden,
-        "platform": "macos" if _is_macos() else ("android" if _is_android() else system),
+        "hidden": effective_hidden,
+        "platform": plat,
+        "mechanism": mechanism,
     }
     save_state(state)
     print(f"[+] '{name}' installed. It will auto-start on every reboot/login.")
@@ -906,7 +1326,7 @@ def uninstall(target_script):
             windows_kill(cp)
     else:
         for cp in copy_paths:
-            linux_kill(cp)
+            linux_kill(cp, name)
 
     if _is_android():
         android_remove_autostart(name)
@@ -917,7 +1337,13 @@ def uninstall(target_script):
         _windows_remove_vbs_launcher(name)
         _windows_remove_cmd_wrapper(name)
     else:
+        # Remove every Linux mechanism unconditionally: the uninstall may run
+        # on a different session type than the install (e.g. installed from a
+        # desktop login, removed over SSH), so clear XDG, systemd and cron
+        # entries regardless of which one the state file records.
         linux_remove_autostart(name)
+        linux_remove_systemd_service(name)
+        linux_remove_cron_autostart(name)
 
     for cp in copy_paths:
         if os.path.exists(cp):
