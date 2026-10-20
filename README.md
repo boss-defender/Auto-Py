@@ -253,33 +253,64 @@ Re-check the script again & again, find bugs and fix them all. Always read the l
 ## ⚡ Quick Start
 
 > [!IMPORTANT]
-> **Windows:** a **normal** Command Prompt is enough — no "Run as administrator". **Linux / macOS:** run as your user — **no `sudo`**.
+> The **four commands are identical on every platform** — `install`, `--hide`, `--hidden`, `--stop`. Only *where you type them* and *which terminal you use* changes. No `sudo`, no Administrator, no password, anywhere.
 
-**Windows — normal terminal:**
+**🪟 Windows 10 / 11 — normal Command Prompt or PowerShell (no admin):**
 
 ```cmd
 cd C:\path\to\auto
-python auto.py C:\path\to\myprogram.py
+python auto.py C:\path\to\myprogram.py            :: visible on every login
+python auto.py C:\path\to\myprogram.py --hide     :: silent
+python auto.py C:\path\to\myprogram.py --hidden   :: silent + hide the folder
+python auto.py myprogram.py --stop                :: remove
 ```
 
-**Linux / macOS — normal terminal:**
+**🐧 Linux desktop (Arch · Ubuntu · Mint · Fedora · Kali · Omarchy · Pop!_OS · Zorin) — normal terminal, no `sudo`:**
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/boss-defender/Auto-Py.git
-cd auto
+git clone https://github.com/boss-defender/Auto-Py.git && cd auto
+python3 auto.py /path/to/myprogram.py             # visible on every login
+python3 auto.py /path/to/myprogram.py --hide      # silent
+python3 auto.py /path/to/myprogram.py --hidden    # silent + hide the folder
+python3 auto.py myprogram.py --stop               # remove
+```
 
-# 2. Install your script — visible on every reboot
-python3 auto.py /path/to/myprogram.py
+**🖥️ Linux server (Ubuntu Server · RHEL · Rocky · Alma — headless), no `sudo`:**
 
-# 3. Or install it silently in the background
-python3 auto.py /path/to/myprogram.py --hide
-
-# 4. Silent AND hide the install folder
-python3 auto.py /path/to/myprogram.py --hidden
-
-# 5. Remove it permanently when done
+```bash
+# Same commands. Visible mode is impossible with no display, so it installs
+# in the background automatically (as if --hide). It uses a systemd user unit,
+# or a cron @reboot entry when linger isn't allowed.
+python3 auto.py /path/to/myprogram.py             # -> background systemd/cron
 python3 auto.py myprogram.py --stop
+```
+
+**🍎 macOS (Sequoia 15 · Tahoe 26) — Terminal, no `sudo`/password:**
+
+```bash
+python3 auto.py /path/to/myprogram.py             # visible: opens Terminal on login
+python3 auto.py /path/to/myprogram.py --hide      # silent LaunchAgent
+python3 auto.py /path/to/myprogram.py --hidden    # silent + hide the folder
+python3 auto.py myprogram.py --stop               # remove
+```
+
+**🤖 Android 9–16 (inside Termux) — needs Termux + Termux:Boot from F-Droid, no root:**
+
+```bash
+pkg install python          # once, inside Termux
+python auto.py ~/myprogram.py            # visible: opens a Termux window on boot
+python auto.py ~/myprogram.py --hide     # silent background on boot
+python auto.py ~/myprogram.py --hidden   # silent + hide the folder
+python auto.py myprogram.py --stop       # remove
+```
+
+**📱 iOS / iPadOS — not supported by the platform:**
+
+```bash
+python3 auto.py myprogram.py
+# -> auto.py detects iOS and exits with an explanation. It writes nothing and
+#    changes nothing. Apple does not allow a user script to run persistently in
+#    the background, so there is no install to run — on any command.
 ```
 
 That's it. No `pip install`, no virtualenv, no compiled extensions.
