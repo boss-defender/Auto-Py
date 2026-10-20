@@ -7,8 +7,10 @@
 Visible when you want to see it. Silent when you don't. One command to install, one command to remove.
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
-[![Linux](https://img.shields.io/badge/Linux-Arch%20%7C%20Fedora%20%7C%20Ubuntu%20%7C%20Mint-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
+[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011%20(no%20admin)-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+[![Linux](https://img.shields.io/badge/Linux-desktop%20%7C%20server-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
+[![macOS](https://img.shields.io/badge/macOS-Sequoia%20%7C%20Tahoe-000000?style=for-the-badge&logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![Android](https://img.shields.io/badge/Android-9%E2%80%9316%20(Termux)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://termux.dev/)
 [![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](./LICENSE)
 
 [**Quick Start**](#-quick-start) · [**Features**](#-features) · [**Usage**](#-usage) · [**How It Works**](#-how-it-works) · [**FAQ**](#-faq)
@@ -18,30 +20,29 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 ---
 
 > [!TIP]
-> **TL;DR** — Run `python auto.py myprogram.py` once. Your script now starts on every reboot, visibly. Add `--hide` to run it silently. Add `--stop` to remove it forever.
+> **TL;DR** — Run `python auto.py myprogram.py` once. Your script now starts on every reboot, visibly. Add `--hide` to run it silently, or `--hidden` to run it silently **and** hide its install folder. Add `--stop` to remove it forever.
 
-> [!WARNING]
-> **Windows users — run `cmd.exe` as Administrator.**
-> `auto.py` uses Task Scheduler (`schtasks`), which returns an **`ERROR: Access is denied`** (or `ERRO`) if the terminal is not elevated. Right-click **Command Prompt → Run as administrator** before running any `auto.py` command.
+> [!NOTE]
+> **Windows users — no Administrator needed.** `auto.py` registers a per-user startup entry (the `HKCU\…\CurrentVersion\Run` key), so a normal Command Prompt runs every feature. It survives reboot, shutdown, and re-login. No `schtasks`, no elevation, no VBScript.
 
 > [!NOTE]
 > **Linux users — no `sudo` or root needed.** Everything runs at the user level via XDG Autostart.
 
 > [!NOTE]
->Linux server: No sudo for install. The program runs as a systemd user service (background only, no visible window). For boot persistence (start without login), run loginctl enable-linger "$USER" once — auto.py tries this automatically and falls back to printing the command if it lacks non-interactive sudo. On Ubuntu 24.04 + systemd 255, verify with loginctl show-user "$USER" -p Linger and apply the documented logind workaround if the service disappears after logout.
+>**Linux server (headless) — no `sudo` for install.** The program runs as a systemd **user** service (background only). For boot persistence without a login, `auto.py` runs `loginctl enable-linger` for you (systemd's default policy allows self-linger with no password); if site policy forbids it, it falls back automatically to a per-user `cron @reboot` entry — still no root. On Ubuntu 24.04 + systemd 255 it prints the known-regression check (`loginctl show-user "$USER" -p Linger`) and the documented workaround.
 
 > [!NOTE]
-> **macOS users — no `sudo` or root needed.** LaunchAgents run at the user level in `~/Library/LaunchAgents/`. Running `auto.py` with `sudo` loads the job into the `system` domain instead of your GUI login session, where it will not behave as expected. The first time the script runs from a LaunchAgent, macOS may prompt for privacy-protected resources (Files & Folders, Accessibility, Automation) — approve the prompt under **System Settings → Privacy & Security**, otherwise the script starts but silently fails on those resources.
+> **macOS users — no `sudo`, root, or password needed.** LaunchAgents run at the user level in `~/Library/LaunchAgents/` and start at every login (`RunAtLoad`). Running `auto.py` with `sudo` would load the job into the `system` domain instead of your GUI session, where it misbehaves — so don't. Visible mode opens Terminal with `open -a Terminal` (a `.command` launcher), which needs **no** Automation permission, so there's no login-time prompt it can't answer. macOS may show a one-time "Background Items Added" notice — keep the item **on** under **System Settings → General → Login Items**.
 
 > [!NOTE]
 > **iOS users — unsupported by platform design.** `auto.py` detects iOS (`$HOME` starts with `/private/var/mobile`) and exits with a full explanation; it never writes a plist, never touches `~/Library/LaunchAgents`, and never calls `launchctl`. No elevation, entitlement, or provisioning profile can make a user script run persistently in the background on iOS.
 
 > [!NOTE]
-> **Android users — Termux + Termux:Boot from F-Droid are required, plus two settings.** Install **Termux** and **Termux:Boot** from **F-Droid only** (mixing F-Droid and Play Store builds causes signature failures and breaks boot execution), open Termux:Boot **once** so Android registers it, and disable **battery optimisation for both apps**. On **Android 14+**, also enable **Settings → System → Developer options → Disable child process restrictions** (the setting survives reboots, but switching Developer options off re-arms the phantom process killer); on **Android 12–13** there is no toggle — use the documented `adb` commands from the Termux wiki if the process dies with signal 9. On **Android 15** the OS may still terminate the process despite all of the above (Termux issue #5150); the Developer-options toggle is the only mitigation on devices that expose it.
+> **Android 9–16 users — Termux + Termux:Boot from F-Droid, plus two settings.** Install **Termux** and **Termux:Boot** from **F-Droid only** (mixing F-Droid and Play Store builds breaks signatures and boot execution), open Termux:Boot **once** so Android registers it, and disable **battery optimisation for both apps**. Visible mode uses Termux's `RUN_COMMAND` API (needs `allow-external-apps=true` in `~/.termux/termux.properties`) and falls back to a foreground service, then a background run, so it still starts. On **Android 14+** also enable **Settings → System → Developer options → Disable child process restrictions**; on **Android 12–13** use the `adb` commands from the Termux wiki if the process dies with signal 9. On **Android 15 and newer** the OS may still terminate the process despite all of the above (Termux issue #5150) — the Developer-options toggle is the only mitigation where it exists. `auto.py` prints this warning only on Android 15+ (API 35+).
 
-> **Tested on: Windows, Arch linux , Kali linux , Fedora , Linux mint**
+> **Tested on: Windows 10/11 (no admin), Arch, Kali, Fedora, Linux Mint, Omarchy/Hyprland, Ubuntu & RHEL servers, macOS, Android/Termux**
 
-> **In Linux mint , it's not working after reboot**
+> **Linux Mint reboot issue — fixed.** Mint's visible-terminal launch and the autostart entry now survive reboot.
 
 
 ---
@@ -59,6 +60,7 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 - [Usage](#-usage)
   - [Visible mode](#-visible-mode-default)
   - [Hidden mode](#-hidden-mode---hide)
+  - [Hidden + hidden folder](#-hidden--hidden-folder---hidden)
   - [Stop / Uninstall](#-stop--uninstall---stop)
 - [Behavior Matrix](#-behavior-matrix)
 - [How It Works](#-how-it-works)
@@ -76,18 +78,18 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 
 ## 🤔 Why auto.py?
 
-You wrote a Python script — a bot, a watcher, a server, a monitor — and you want it to **start on every boot**, on **both Linux and Windows**, with **one command**, without touching `systemd`, Task Scheduler, or `.desktop` files by hand.
+You wrote a Python script — a bot, a watcher, a server, a monitor — and you want it to **start on every boot**, across **Linux desktops and servers, Windows, macOS, and Android**, with **one command**, without touching `systemd`, the registry, LaunchAgents, or `.desktop` files by hand — and **without admin, root, sudo, or a password**.
 
 `auto.py` does exactly that:
 
 ```bash
 python auto.py myprogram.py            # visible, survives reboot
 python auto.py myprogram.py --hide     # silent, survives reboot
-python auto.py myprogram.py --hidden    # silent, hide folder, survives reboot 
+python auto.py myprogram.py --hidden   # silent + hides the install folder, survives reboot
 python auto.py myprogram.py --stop     # remove permanently
 ```
 
-**Three commands. Two operating systems. Zero configuration files to edit.**
+**One command. Five platforms. Zero elevation, zero config files to edit.**
 
 ---
 
@@ -251,20 +253,16 @@ Re-check the script again & again, find bugs and fix them all. Always read the l
 ## ⚡ Quick Start
 
 > [!IMPORTANT]
-> **Windows:** open **Command Prompt as Administrator** first (Start → type `cmd` → right-click → **Run as administrator**). Without elevation, `schtasks` returns `ERROR: Access is denied` and the script will exit.
-> **Linux:** run normally as your user — **no `sudo` needed**.
+> **Windows:** a **normal** Command Prompt is enough — no "Run as administrator". **Linux / macOS:** run as your user — **no `sudo`**.
 
-**Windows — open elevated terminal:**
+**Windows — normal terminal:**
 
 ```cmd
-:: Start menu → search "cmd" → Right-click → "Run as administrator"
-:: OR press Win+X → "Terminal (Admin)" / "Command Prompt (Admin)"
-:: Then, in the elevated window:
 cd C:\path\to\auto
 python auto.py C:\path\to\myprogram.py
 ```
 
-**Linux — open a normal terminal:**
+**Linux / macOS — normal terminal:**
 
 ```bash
 # 1. Clone the repo
@@ -277,7 +275,10 @@ python3 auto.py /path/to/myprogram.py
 # 3. Or install it silently in the background
 python3 auto.py /path/to/myprogram.py --hide
 
-# 4. Remove it permanently when done
+# 4. Silent AND hide the install folder
+python3 auto.py /path/to/myprogram.py --hidden
+
+# 5. Remove it permanently when done
 python3 auto.py myprogram.py --stop
 ```
 
@@ -300,10 +301,13 @@ Show a terminal window, or run silently with no UI.
 **📦 Self-contained**
 Copies your script to `~/.configs/` — keeps running even if the original is deleted.
 
+**🙈 `--hidden` — hide the folder too**
+Everything `--hide` does, plus hides the install folder: the **hidden attribute** on Windows, a **leading dot** on Linux/macOS/Android (renamed only if it isn't dotted already).
+
 **You can change .configs to any folder name like .msdxs or visible-folder etc**
 
 **🐍 `.py` / `.pyw` aware on Windows**
-Automatically swaps to `pythonw.exe` + `.pyw` when `--hide` is used.
+Automatically swaps to `pythonw.exe` + `.pyw` when `--hide`/`--hidden` is used.
 
 </td>
 <td width="50%">
@@ -314,8 +318,11 @@ Killing via Task Manager / `kill` stops only the *current* session. Next reboot 
 **🧹 One-shot uninstall**
 `--stop` kills the process, removes the autostart entry, and deletes the copy.
 
-**🌐 XDG-compliant on Linux**
-GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC — **no root needed**.
+**🔓 No admin · no root · no password**
+Windows uses a per-user `Run` key; Linux/macOS/Android stay entirely at user level.
+
+**🌐 Everywhere at user level**
+Windows · Linux desktop (GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC) · Linux server · macOS · Android/Termux.
 
 **⚡ Modern terminal support**
 `xdg-terminal-exec`, `ptyxis`, `kgx`, `ghostty`, `foot`, `gnome-terminal`, `konsole`, `xfce4-terminal`, `xterm`, `x-terminal-emulator`.
@@ -331,15 +338,20 @@ GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC — **no root nee
 | OS | Version Tested | Autostart Mechanism | Elevation Required? | Notes |
 |:---|:---|:---|:---:|:---|
 | **Arch Linux** | Rolling | XDG Autostart | ❌ no | Any DE / WM |
-| **Omarchy Linux** | Rolling (Hyprland) | XDG + `xdg-terminal-exec` | ❌ no | Ghostty / Foot / Alacritty / Kitty |
+| **Omarchy Linux** | Rolling (Hyprland) | Hyprland config (`autostart.lua` / `exec-once`) | ❌ no | Ghostty / Foot / Alacritty / Kitty |
 | **Ubuntu** | 22.04 · 24.04 · 25.04 | XDG Autostart | ❌ no | GNOME |
 | **Kali Linux** | Latest | XDG Autostart | ❌ no | XFCE / GNOME |
 | **Linux Mint** | 21 · 22 | XDG Autostart | ❌ no | Cinnamon / XFCE / MATE |
 | **Fedora Workstation** | 39 · 40 · 41 | XDG Autostart | ❌ no | GNOME / KDE / XFCE |
 | **Pop!_OS** | 22.04 · 24.04 (COSMIC) | XDG Autostart | ❌ no | Auto-detects `ptyxis` / `kgx` |
 | **Zorin OS** | 17 · 18 | XDG Autostart | ❌ no | GNOME-based |
-| **Windows 10** | 22H2 | Task Scheduler | ✅ **Administrator** | `ONLOGON /IT` |
-| **Windows 11** | 23H2 · 24H2 · 25H2 | Task Scheduler | ✅ **Administrator** | 25H2 gets extra startup delay |
+| **Ubuntu Server** | 22.04 · 24.04 · 25.04+ | systemd user unit → cron `@reboot` | ❌ no | Headless; linger for boot start |
+| **RHEL / Rocky / Alma** | 9 · 10 | systemd user unit → cron `@reboot` | ❌ no | Headless; linger for boot start |
+| **Windows 10** | 22H2 | Per-user `Run` key | ❌ **no** | `HKCU\…\CurrentVersion\Run` |
+| **Windows 11** | 23H2 · 24H2 · 25H2 | Per-user `Run` key | ❌ **no** | No admin, no `schtasks` |
+| **macOS** | Sequoia (15) · Tahoe (26) | LaunchAgent (`RunAtLoad`) | ❌ no | `open -a Terminal` for visible mode |
+| **Android** | 9–16 (Termux) | Termux:Boot script | ❌ no | F-Droid Termux + Termux:Boot |
+| **iOS** | — | *unsupported by design* | — | Exits with a documented explanation |
 
 ---
 
@@ -352,11 +364,11 @@ GNOME · KDE · XFCE · Cinnamon · MATE · Hyprland · COSMIC — **no root nee
 |:---|:---|:---|
 | **Python 3.8+** | ✅ required | ✅ required |
 | **`pythonw.exe`** | — | ✅ ships with the standard installer |
-| **Desktop environment** | ✅ any XDG-compliant DE | — (Task Scheduler) |
-| **Elevation** | ❌ **not needed** — user-level autostart | ✅ **Administrator cmd.exe required** |
+| **Desktop environment** | ✅ any XDG-compliant DE (servers run headless) | — (per-user `Run` key) |
+| **Elevation** | ❌ **not needed** — user-level autostart | ❌ **not needed** — per-user `Run` key |
 
-> [!WARNING]
-> **Windows:** Task Scheduler operations (`schtasks /Create`, `/Delete`) fail with `ERROR: Access is denied` (or `ERRO`) when the terminal is not elevated. There is no way around this — Windows requires admin rights to register tasks that run at logon.
+> [!NOTE]
+> **No elevation anywhere.** Windows writes a per-user `Run` key (`HKCU`), which any normal account may set — no Administrator, no `schtasks`. Linux, macOS, and Android stay inside your own `$HOME`.
 
 </details>
 
@@ -378,11 +390,8 @@ python3 --version
 <details>
 <summary><b>Steps — Windows</b></summary>
 
-1. **Open an elevated Command Prompt:**
-   - Start menu → search `cmd` → right-click **Run as administrator**, **or**
-   - Press <kbd>Win</kbd> + <kbd>X</kbd> → **Terminal (Admin)** / **Command Prompt (Admin)**
-2. Verify the window title says **"Administrator"**.
-3. Clone and run:
+1. Open a **normal** Command Prompt (no "Run as administrator" needed).
+2. Clone and run:
 
 ```cmd
 git clone https://github.com/<your-username>/auto.git
@@ -398,8 +407,7 @@ python --version
 ## 🎯 Usage
 
 > [!IMPORTANT]
-> **Windows:** every command below must be run from an **elevated** Command Prompt.
-> **Linux:** run from any normal terminal — no elevation.
+> Run every command below from a **normal** terminal — no elevation, no `sudo`, no password, on any platform.
 
 ### Visible mode (default)
 
@@ -421,6 +429,17 @@ python auto.py myprogram.py --hide
 2. Registers it to run **with no window** on every login
 3. Starts it immediately in the background
 
+### Hidden + hidden folder (`--hidden`)
+
+```bash
+python auto.py myprogram.py --hidden
+```
+
+Everything `--hide` does, and it also **hides the install folder**:
+
+- **Windows** → sets the folder's **hidden attribute** (a leading dot means nothing to Explorer).
+- **Linux · Linux server · macOS · Android** → a folder is hidden by a **leading dot**. If the name already starts with a dot (the default `~/.configs` does), nothing changes; if it doesn't, the folder is renamed to add the dot — done **before** anything is written in, so every autostart entry points at the final path.
+
 ### Stop / Uninstall (`--stop`)
 
 ```bash
@@ -428,12 +447,11 @@ python auto.py myprogram.py --stop
 ```
 
 1. Kills the running copy
-2. Deletes the autostart entry (Task Scheduler task or `.desktop` file)
+2. Deletes the autostart entry (per-user `Run` key, `.desktop`, systemd unit, cron line, LaunchAgent, or Termux boot script)
 3. Removes the copy from `~/.configs/`
 
 > [!IMPORTANT]
-> After `--stop`, the program **will not come back** on reboot.
-> On **Windows**, `--stop` also requires an **elevated** Command Prompt because deleting a scheduled task needs admin rights.
+> After `--stop`, the program **will not come back** on reboot. On **Windows** this also needs no Administrator — removing a per-user `Run` key is a normal-user operation.
 
 <details>
 <summary><b>Handling <code>.pyw</code> files on Windows</b></summary>
@@ -456,10 +474,13 @@ The **base name** (`myprogram`) is what `--stop` uses to find the copy, so `--st
 |:---|:---|:---|:---:|:---:|:---:|
 | `auto.py app.py` *(Linux)* | `app.py` | `python3` | ✅ terminal | ✅ yes | ❌ no |
 | `auto.py app.py --hide` *(Linux)* | `app.py` | `python3` *(detached)* | ❌ none | ✅ yes | ❌ no |
-| `auto.py app.py` *(Windows)* | `app.py` | `python.exe` | ✅ console | ✅ yes | ✅ **Admin** |
-| `auto.py app.py --hide` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
-| `auto.py app.pyw` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ✅ **Admin** |
-| `auto.py app.py --stop` | — | — | — | ❌ removed | ✅ **Admin** *(Windows only)* |
+| `auto.py app.py` *(Windows)* | `app.py` | `python.exe` | ✅ console | ✅ yes | ❌ **no** |
+| `auto.py app.py --hide` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ❌ **no** |
+| `auto.py app.py --hidden` | `app.pyw`* | `pythonw.exe`* | ❌ none | ✅ yes | ❌ no |
+| `auto.py app.pyw` *(Windows)* | `app.pyw` | `pythonw.exe` | ❌ none | ✅ yes | ❌ **no** |
+| `auto.py app.py --stop` | — | — | — | ❌ removed | ❌ no |
+
+<sub>*`--hidden` also hides the install folder; the `.pyw`/`pythonw.exe` detail applies on Windows.</sub>
 
 ### Session kill vs. permanent stop
 
@@ -467,7 +488,7 @@ The **base name** (`myprogram`) is what `--stop` uses to find the copy, so `--st
 |:---|:---|:---:|
 | Task Manager → End task | ❌ stops current session only — **returns next login** | ❌ no |
 | `kill <pid>` *(Linux)* | ❌ stops current session only — **returns next login** | ❌ no |
-| `auto.py app.py --stop` | ✅ **permanent** — autostart entry deleted, will never return | ✅ **Admin** *(Windows only)* |
+| `auto.py app.py --stop` | ✅ **permanent** — autostart entry deleted, will never return | ❌ no |
 
 > [!NOTE]
 > This is by design — it mirrors how real "always-on" services behave. Only an explicit `--stop` removes the autostart entry.
@@ -478,66 +499,57 @@ The **base name** (`myprogram`) is what `--stop` uses to find the copy, so `--st
 
 ### Windows
 
-Uses **Task Scheduler** with `/SC ONLOGON /IT /RL LIMITED`:
+Uses the **per-user `Run` registry key** — no Administrator, no `schtasks`, no VBScript:
 
-| Flag | Purpose |
+```
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+```
+
+| Part | Purpose |
 |:---|:---|
-| `/SC ONLOGON` | Fires at every user login |
-| `/IT` | Runs in the **interactive user session** — required for visible console (session 0 cannot draw UI) |
-| `/RL LIMITED` | Runs with normal user rights, not elevated |
+| `HKCU\…\Run` value | Fires at every user logon — the standard, documented per-user startup location |
+| `pythonw.exe` + `.pyw` launcher | Starts the program with **no** console flash |
+| `StartupApproved\Run` cleanup | Clears the "disabled" flag so a re-enabled entry actually runs |
 
-> [!WARNING]
-> **`schtasks /Create` and `schtasks /Delete` require an elevated terminal**, even with `/RL LIMITED`. The `/RL LIMITED` flag controls the rights of the *running task*, not the rights needed to *create* it. Running `auto.py` from a non-elevated `cmd.exe` returns:
-> ```
-> ERROR: Access is denied.
-> ```
+> [!NOTE]
+> **Why the change from Task Scheduler?** `schtasks /Create /SC ONLOGON` is refused from a non-elevated prompt (`ERROR: Access is denied`), which forced users into an Administrator window. The `Run` key is writable by any normal account, so `auto.py` now needs **no elevation at all**. If an old admin-only scheduled task is found, `auto.py` removes it (and tells you if deleting it needs one last elevated step).
 
 <details>
-<summary><b>Visible mode (<code>.py</code>) — task action</b></summary>
+<summary><b>How the entry is built</b></summary>
 
-```cmd
-cmd.exe /c cd /d "%USERPROFILE%\.configs" && start "" "python.exe" "app.py"
+`auto.py` writes a tiny generated launcher — `~/.configs/_vb_launch_<name>.pyw` — and points the `Run` value at it:
+
+```
+"C:\...\pythonw.exe" "C:\Users\you\.configs\_vb_launch_<name>.pyw"
 ```
 
-`start` forces a fresh console window even if the parent has none.
+The launcher sets the working directory and starts your real program:
+
+- **visible** → `python.exe` with `CREATE_NEW_CONSOLE`
+- **hidden** (`--hide` / `--hidden`) → `pythonw.exe` with `CREATE_NO_WINDOW`
+
+No VBScript (Microsoft is phasing VBScript out of Windows) and no `.cmd` wrapper (which flashes a console).
 
 </details>
 
 <details>
-<summary><b>Hidden mode (<code>.pyw</code>) — task action</b></summary>
+<summary><b>Immediate-start subprocess flags</b></summary>
 
-```cmd
-cmd.exe /c cd /d "%USERPROFILE%\.configs" && "pythonw.exe" "app.pyw"
-```
-
-`pythonw.exe` is the windowless Python interpreter that ships with the standard installer.
-
-</details>
-
-<details>
-<summary><b>Windows 11 25H2 (build ≥ 26100) — extra startup delay</b></summary>
-
-Windows added a **Delayed Desktop Initialization** phase that can fire ONLOGON tasks before the shell is ready. On those builds, `auto.py` prefixes the task action with:
-
-```cmd
-timeout /t 5 /nobreak >nul &&
-```
-
-so the program waits for the desktop to finish loading.
-
-</details>
-
-<details>
-<summary><b>Hidden subprocess flags — why no <code>DETACHED_PROCESS</code>?</b></summary>
-
-For the immediate-start call, the script uses:
+For the start-now call, the launcher uses:
 
 ```python
-CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB
+CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW   # (+ CREATE_BREAKAWAY_FROM_JOB when allowed)
 ```
 
 > [!WARNING]
-> `DETACHED_PROCESS` is **intentionally omitted** — per MSDN, `CREATE_NO_WINDOW` is silently ignored when combined with `DETACHED_PROCESS`, which would allow a console to flash. `CREATE_BREAKAWAY_FROM_JOB` prevents the child from being killed if the parent is in a job object.
+> `DETACHED_PROCESS` is **intentionally omitted** — per MSDN, `CREATE_NO_WINDOW` is silently ignored when combined with `DETACHED_PROCESS`, which would let a console flash. `CREATE_BREAKAWAY_FROM_JOB` lets the program outlive the installer's terminal; if the host forbids breakaway (some IDEs/CI run inside a job object), `auto.py` retries without it instead of crashing.
+
+</details>
+
+<details>
+<summary><b>Hiding the folder on Windows (<code>--hidden</code>)</b></summary>
+
+`--hidden` sets `FILE_ATTRIBUTE_HIDDEN` on `~/.configs`, preserving every other attribute (it reads the current flags and ORs the hidden bit in — it never clobbers them). A leading dot means nothing to Explorer, so the attribute is the only thing that hides a folder on Windows.
 
 </details>
 
@@ -545,10 +557,22 @@ CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB
 
 ### Linux
 
-Uses the **XDG Autostart specification** — a `.desktop` file at `~/.config/autostart/<name>.desktop`.
+**Desktop** uses the **XDG Autostart specification** — a `.desktop` file at `~/.config/autostart/<name>.desktop`. Two cases are handled specially:
+
+- **Hyprland / Omarchy** don't run XDG Autostart reliably, so `auto.py` writes a marked block to the compositor config instead (`~/.config/hypr/autostart.lua` via `o.launch_on_start`, or `exec-once` in the legacy `.conf`), and skips the `.desktop` to avoid a double start.
+- **Headless servers** (no `DISPLAY`/`WAYLAND_DISPLAY`) have no graphical session, so XDG never runs — see the server mechanism below.
 
 > [!TIP]
-> **No `sudo`, no root, no elevation needed.** Everything is written inside the user's own `$HOME`, which is the standard, spec-compliant location for per-user autostart entries.
+> **No `sudo`, no root, no password.** Everything is written inside the user's own `$HOME`, the spec-compliant location for per-user autostart.
+
+<details>
+<summary><b>Linux server (headless) — systemd user unit, with cron fallback</b></summary>
+
+On a headless host `auto.py` installs a **systemd user unit** at `~/.config/systemd/user/<name>.service` and enables it with `systemctl --user`. To start at boot without a login it enables **linger** (`loginctl enable-linger`) — systemd's default polkit policy allows a user to self-linger with no password.
+
+If the user bus is unreachable (e.g. `su` without a login session) or site policy forbids linger, it falls back to a per-user **`cron @reboot`** entry — still **no root**. On Ubuntu 24.04 + systemd 255 it prints the known logind-regression check and the documented workaround (it never edits `/etc/systemd/logind.conf` itself).
+
+</details>
 
 <details>
 <summary><b>Example generated <code>.desktop</code> file</b></summary>
@@ -580,14 +604,16 @@ The spec allows a `Path=` key for the working directory, but **XFCE and KDE Plas
 |:---:|:---|:---|
 | 1 | `xdg-terminal-exec` | Omarchy, Arch, Fedora 40+ |
 | 2 | `x-terminal-emulator` | Debian alternatives — Ubuntu, Mint, Kali |
-| 3 | `ptyxis` | Pop!_OS 24.04+, GNOME 47+ |
+| 3 | `ptyxis` | Fedora 41+, Ubuntu 25.10+, GNOME 47+ |
 | 4 | `kgx` | GNOME Console |
-| 5 | `gnome-terminal` | Ubuntu, Fedora, Zorin |
+| 5 | `gnome-terminal` | Ubuntu, Fedora, Zorin, Mint Cinnamon |
 | 6 | `konsole` | KDE Plasma |
 | 7 | `xfce4-terminal` | XFCE |
-| 8 | `ghostty` | Omarchy fallback |
-| 9 | `foot` | Wayland-native fallback |
-| 10 | `xterm` | Last resort |
+| 8 | `mate-terminal` | Linux Mint MATE |
+| 9 | `cosmic-term` | Pop!_OS COSMIC |
+| 10 | `ghostty` | Omarchy fallback |
+| 11 | `foot` | Wayland-native fallback |
+| 12 | `xterm` | Last resort |
 
 If none are found, the script launches detached and prints a warning — it never fails silently.
 
@@ -619,8 +645,7 @@ python auto.py myprogram.py --stop
 ```
 
 > [!IMPORTANT]
-> **Windows:** `--stop` deletes a scheduled task, which requires an **elevated** Command Prompt. If you skip this, you'll see `ERROR: Access is denied`.
-> **Linux:** run normally — no `sudo`.
+> Runs from a **normal** terminal on every platform — no `sudo`, no Administrator, no password.
 
 > [!NOTE]
 > This single command kills every running instance, deletes the autostart entry, removes the copy, and cleans up `state.json`.
@@ -632,14 +657,16 @@ python auto.py myprogram.py --stop
 
 ```bash
 rm -rf ~/.configs
-rm -f ~/.config/autostart/*.desktop   # inspect first!
+rm -f ~/.config/autostart/*.desktop            # inspect first!
+rm -f ~/.config/systemd/user/*.service         # servers — inspect first!
 ```
 
-**Windows (PowerShell — Run as Administrator):**
+**Windows (normal PowerShell — no Administrator):**
 
 ```powershell
 Remove-Item -Recurse -Force "$env:USERPROFILE\.configs"
-Get-ScheduledTask | Where-Object { $_.TaskName -like "VisibleBackground_*" } | Unregister-ScheduledTask -Confirm:$false
+Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" |
+  Select-Object -Property "VisibleBackground_*"   # inspect, then Remove-ItemProperty
 ```
 
 </details>
@@ -661,7 +688,7 @@ After installing `myprogram.py`, your home directory contains:
         └── myprogram.desktop   ← Linux only
 ```
 
-On Windows, the autostart entry lives **outside** the home folder — it's a Task Scheduler entry named `VisibleBackground_myprogram`.
+On Windows, the autostart entry lives in the registry — a per-user value named `VisibleBackground_<name>` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, pointing at a generated `~/.configs/_vb_launch_<name>.pyw` launcher.
 
 <details>
 <summary><b>What does <code>state.json</code> look like?</b></summary>
@@ -669,13 +696,16 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 ```json
 {
   "myprogram": {
-    "source": "/home/user/projects/myprogram.py",
-    "copy":   "/home/user/.configs/myprogram.py",
-    "hidden": false,
-    "ext":    null
+    "source":    "/home/user/projects/myprogram.py",
+    "copy":      "/home/user/.configs/myprogram.py",
+    "hidden":    false,
+    "platform":  "linux",
+    "mechanism": "xdg"
   }
 }
 ```
+
+`mechanism` records exactly how it was installed — `xdg`, `hyprland`, `systemd`, `cron` (Linux), `run-key` (Windows), `launchagent` (macOS), or `termux-boot` (Android) — so `--stop` cleans up the right thing.
 
 </details>
 
@@ -686,32 +716,24 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 <details>
 <summary><b>🪟 Windows issues</b></summary>
 
-### `ERROR: Access is denied` / `ERRO` when running `auto.py`
+### Nothing appears after reboot / the program doesn't start
 
-**This is the most common issue.** `schtasks` requires an elevated terminal.
+`auto.py` needs **no Administrator** — run it from a normal prompt. To check the entry:
 
-**Fix:** Open **Command Prompt as Administrator**, then re-run the command.
-
-- Start menu → search `cmd` → right-click → **Run as administrator**
-- Or press <kbd>Win</kbd> + <kbd>X</kbd> → **Terminal (Admin)** / **Command Prompt (Admin)**
-- Verify the window title bar says **"Administrator: C:\Windows\System32\cmd.exe"**
-
-### Visible console doesn't appear after reboot
-
-- Confirm the task exists: `schtasks /Query /TN VisibleBackground_myprogram`
-- Confirm `/IT` is set — tasks without `/IT` run in **session 0** and cannot show UI
-- On Windows 11 25H2, the 5-second delay is expected — check again after ~10 seconds
+- Confirm the `Run` value exists: `reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v VisibleBackground_myprogram`
+- Confirm it's enabled in **Task Manager → Startup apps** (a disabled entry won't run; reinstalling re-enables it)
+- Confirm `python.exe` / `pythonw.exe` are on `PATH` — run `where python` and `where pythonw`
 
 ### Hidden process shows a console flash at boot
 
-- Make sure the saved file has the `.pyw` extension
-- Verify the task action references `pythonw.exe`, not `python.exe`
-- Do not edit the task to add `DETACHED_PROCESS` — it breaks `CREATE_NO_WINDOW`
+- Make sure the saved file has the `.pyw` extension (use `--hide` or `--hidden`)
+- Verify the `Run` value references `pythonw.exe`, not `python.exe`
+- Don't add `DETACHED_PROCESS` to the launcher — it breaks `CREATE_NO_WINDOW`
 
-### Task creation fails with "The system cannot find the file specified"
+### An old version left a scheduled task
 
-- Ensure the `cmd.exe` working directory is valid
-- Confirm `python.exe` / `pythonw.exe` are on `PATH` — run `where python` and `where pythonw`
+Earlier releases used Task Scheduler. `auto.py` deletes that task automatically; if Windows says deleting it needs elevation, run once:
+`schtasks /Delete /TN VisibleBackground_myprogram /F` (as Administrator).
 
 </details>
 
@@ -752,19 +774,16 @@ On Windows, the autostart entry lives **outside** the home folder — it's a Tas
 <details>
 <summary><b>Do I need to run <code>auto.py</code> as Administrator on Windows?</b></summary>
 
-**Yes — for every command** (`install`, `--hide`, and `--stop`).
+**No — not for any command** (`install`, `--hide`, `--hidden`, or `--stop`).
 
-- `schtasks /Create` — requires elevation
-- `schtasks /Delete` — requires elevation
-
-`/RL LIMITED` in the task itself only affects how the *running program* is launched — it does **not** exempt you from running the *installer* as admin.
+`auto.py` writes a per-user `Run` key under `HKCU`, which any normal account may set and remove. There's no `schtasks`, so there's nothing that needs elevation. It survives reboot, shutdown, and re-login.
 
 </details>
 
 <details>
-<summary><b>Do I need <code>sudo</code> on Linux?</b></summary>
+<summary><b>Do I need <code>sudo</code>, root, or a password anywhere?</b></summary>
 
-**No.** `auto.py` on Linux only writes to `~/.config/autostart/` and `~/.configs/` — both inside your own home directory. Running it with `sudo` would put the files under `root`'s home and break the autostart entry for your user.
+**No.** Windows uses a per-user `Run` key; Linux writes only inside `$HOME`; macOS uses a user LaunchAgent; Android uses Termux. On a Linux server the one potentially privileged step, `loginctl enable-linger`, is allowed for your own user without a password by systemd's default policy — and if a site blocks it, `auto.py` falls back to a user `cron @reboot` entry. Running with `sudo` would put files under `root`'s home and break your user's autostart.
 
 </details>
 
@@ -778,14 +797,14 @@ The copy in `~/.configs/` keeps running. `--stop` still works because it uses th
 <details>
 <summary><b>Can I install multiple scripts?</b></summary>
 
-Yes. Each script gets its own autostart entry (`VisibleBackground_<name>` on Windows, `<name>.desktop` on Linux). `state.json` tracks all of them.
+Yes. Each script gets its own autostart entry (`VisibleBackground_<name>` `Run` value on Windows, `<name>.desktop` / unit / boot script elsewhere). `state.json` tracks all of them.
 
 </details>
 
 <details>
-<summary><b>Can I reinstall the same script with different <code>--hide</code> settings?</b></summary>
+<summary><b>Can I reinstall the same script with different <code>--hide</code> / <code>--hidden</code> settings?</b></summary>
 
-Yes. Running `auto.py myprogram.py --hide` after `auto.py myprogram.py` will tear down the old visible entry and install the hidden one.
+Yes. Re-running tears down the old entry and installs the new one, and it kills the already-running instance first so you never end up with two copies running.
 
 </details>
 
@@ -799,7 +818,7 @@ No — only the **base name** matters. `--stop myprogram.py` and `--stop myprogr
 <details>
 <summary><b>Can I run this on a server (no desktop)?</b></summary>
 
-`auto.py` targets **user sessions**. On a headless server, use `systemd --user` directly. The visible mode will not work without a display server.
+Yes. On a headless host `auto.py` installs a **systemd user unit** (falling back to `cron @reboot`) automatically — you don't configure `systemd` by hand. Visible mode isn't possible without a display, so it installs in background mode there.
 
 </details>
 
