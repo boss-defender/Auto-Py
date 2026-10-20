@@ -83,6 +83,7 @@ You wrote a Python script — a bot, a watcher, a server, a monitor — and you 
 ```bash
 python auto.py myprogram.py            # visible, survives reboot
 python auto.py myprogram.py --hide     # silent, survives reboot
+python auto.py myprogram.py --hidden    # silent, hide folder, survives reboot 
 python auto.py myprogram.py --stop     # remove permanently
 ```
 
