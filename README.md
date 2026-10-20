@@ -107,9 +107,11 @@ You are a senior cross-platform systems engineer. Update the provided `auto.py` 
 
 **Android (9 through 15+):** Supported only via Termux and Termux:Boot (installed from F-Droid, not Google Play). The script writes boot scripts to `~/.termux/boot/`. Critical known issue: On Android 15, the OS aggressively kills Termux background processes even with `termux-wake-lock` active and battery optimization disabled — this is a confirmed upstream bug tracked in Termux issue #5150. The script must preserve `termux-wake-lock` and print a prominent warning that Android 15 may still terminate the process, advising the user to enable “Disable child process restrictions” in Developer Options if available. Do not promise reliability that the platform does not provide.
 
-**Linux (all distributions using XDG Autostart):** Arch Linux, Omarchy Linux, Manjaro, Ubuntu (LTS + interim), Kali Linux, Linux Mint (Cinnamon, XFCE, MATE), Fedora Workstation, Pop!_OS (GNOME + COSMIC), Zorin OS, and any major Debian/Ubuntu/Fedora/Arch derivative. The script writes `~/.config/autostart/<name>.desktop`. No sudo or root is ever required on Linux.
+**Linux desktop (all distributions using XDG Autostart):** Arch Linux, Omarchy Linux, Manjaro, Ubuntu Desktop (LTS + interim), Kali Linux, Linux Mint (Cinnamon, XFCE, MATE), Fedora Workstation, Pop!_OS (GNOME + COSMIC), Zorin OS, and any major Debian/Ubuntu/Fedora/Arch derivative. The script writes `~/.config/autostart/<name>.desktop`. No sudo or root is ever required on Linux.
 
-### Terminal-emulator detection order (must be preserved)
+**Linux server (headless — Ubuntu Server and Red Hat Enterprise Linux Server):** Ubuntu Server 22.04 LTS, 24.04 LTS, 25.04, and later; RHEL 9 and RHEL 10 (and any rebuild such as Rocky Linux / AlmaLinux that tracks the same systemd behaviour). These platforms have **no graphical session** (`DISPLAY` and `WAYLAND_DISPLAY` are both unset), so XDG Autostart never runs. The script must detect this condition and install a **systemd user unit** at `~/.config/systemd/user/<name>.service` instead. No root is required for the unit itself; the only potentially privileged step is `loginctl enable-linger`, which the script attempts without sudo first and then via non-interactive sudo, falling back to a printed instruction. See the dedicated “Linux server rules” section below.
+
+### Terminal-emulator detection order (must be preserved — desktop Linux only)
 `xdg-terminal-exec` → `x-terminal-emulator` → `ptyxis` → `kgx` → `gnome-terminal` → `konsole` → `xfce4-terminal` → `mate-terminal` → `cosmic-term` → `ghostty` → `foot` → `xterm`
 
 If none is found, launch detached and print a warning — do not fail silently.
@@ -132,7 +134,7 @@ Current documented defaults (for verification):
 - `.py` input without `--hide` → saved as `.py`, run with `python.exe` (visible console), task created with `/SC ONLOGON /IT`.
 - `.pyw` input OR `--hide` → saved as `.pyw`, run with `pythonw.exe`, no console window, task created with `/SC ONLOGON /IT`.
 - Hidden subprocess flags: `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB`. Must NOT include `DETACHED_PROCESS` — MSDN documents that `CREATE_NO_WINDOW` is ignored when combined with `DETACHED_PROCESS`.
-- For Windows 11 build ≥ 26100 (25H2), prepend `timeout /t 5 /nobreak >nul &&` to the task action (not inside the VBS launcher) for “Delayed Desktop Initialization.”
+- For Windows 11 build ≥ 26100 (24H2 = 26100, 25H2 = 26200), prepend `timeout /t 5 /nobreak >nul &&` to the task action (not inside the VBS launcher) for “Delayed Desktop Initialization.”
 - `--stop` must work regardless of whether the original argument was `.py` or `.pyw`; use the sanitized base name to locate the copy.
 
 ## macOS-specific rules
@@ -147,15 +149,15 @@ Current documented defaults (for verification):
 - iOS is unsupported. The script must detect iOS and exit with a clear, documented explanation instead of attempting an install that the OS will silently break.
 - Detection: `platform.system() == "darwin"` and `$HOME` starts with `/private/var/mobile`.
 - The explanation must state the following facts, each backed by Apple’s own documentation:
-  - iOS suspends third-party apps shortly after they move to the background. This suspension prevents the process from running any code.[reference:0]
-  - There is no general-purpose mechanism for running code continuously, at a specific time, at a guaranteed interval, or in response to a network/IPC request in the background.[reference:1]
-  - `BGAppRefreshTask` is opportunistic and time-bounded to roughly 30 seconds.[reference:2][reference:3] `BGProcessingTask` is also opportunistic and typically runs only when the device is idle and plugged in, for about 60 seconds (sometimes a few minutes).[reference:4] Neither is a substitute for a persistent autostart daemon.
-  - Scheduling is decided by `dasd` (Duet Activity Scheduler Daemon), not by the app. Battery level below ~20%, Low Power Mode, thermal pressure, and low user engagement can all cause a submitted task to be dropped entirely.[reference:5]
-  - Once the user force-quits an app, iOS will not restart it in the background. No third-party library can bypass this.[reference:6]
+  - iOS suspends third-party apps shortly after they move to the background. This suspension prevents the process from running any code.
+  - There is no general-purpose mechanism for running code continuously, at a specific time, at a guaranteed interval, or in response to a network/IPC request in the background.
+  - `BGAppRefreshTask` is opportunistic and time-bounded to roughly 30 seconds. `BGProcessingTask` is also opportunistic and typically runs only when the device is idle and plugged in, for about 60 seconds (sometimes a few minutes). Neither is a substitute for a persistent autostart daemon.
+  - Scheduling is decided by `dasd` (Duet Activity Scheduler Daemon), not by the app. Battery level below ~20%, Low Power Mode, thermal pressure, and low user engagement can all cause a submitted task to be dropped entirely.
+  - Once the user force-quits an app, iOS will not restart it in the background. No third-party library can bypass this.
   - A Jailbroken device or an MDM-supervised device does not change this contract for ordinary user scripts; do not suggest jailbreak or MDM workarounds as part of the script.
 - The script must not write any files to `~/Library/LaunchAgents` on iOS, must not call `launchctl`, and must not create any plist.
 - The same `ios_unsupported()` guard must run at the top of both `install()` and `uninstall()` so that neither `--hide` nor `--stop` can ever reach platform-specific code on iOS.
-- If the user asks for a best-effort alternative, the script may print (but must not implement) that the only Apple-sanctioned path is a Shortcuts automation triggered by “Device Unlocked” or “Wi-Fi connected” after boot. This is a user-configured workaround, not something a Python script can install.[reference:7][reference:8] The script must not pretend it has configured this for the user.
+- If the user asks for a best-effort alternative, the script may print (but must not implement) that the only Apple-sanctioned path is a Shortcuts automation triggered by “Device Unlocked” or “Wi-Fi connected” after boot. This is a user-configured workaround, not something a Python script can install. The script must not pretend it has configured this for the user.
 
 ## Android / Termux rules
 
@@ -165,7 +167,7 @@ Current documented defaults (for verification):
 - Hidden mode: background the Python process with output redirected to `/dev/null`.
 - Print a warning that Android 15 may still kill the process despite the wake-lock (upstream issue #5150) and instruct the user to disable child-process restrictions if the option exists.
 
-## Linux-specific rules (XDG Autostart)
+## Linux desktop rules (XDG Autostart)
 
 - No sudo / root. Ever.
 - Write `~/.config/autostart/<name>.desktop`.
@@ -175,6 +177,22 @@ Current documented defaults (for verification):
 - Visible mode: explicitly launch a terminal emulator from the detection list. Do not rely on `Terminal=true` alone — many desktop environments ignore it.
 - If no terminal is found, fall back to detached launch and print a warning.
 
+## Linux server rules (Ubuntu Server, RHEL Server, and any headless systemd host)
+
+- **Detection.** Treat the host as a server when `platform.system() == "linux"` and neither `DISPLAY` nor `WAYLAND_DISPLAY` is set. XDG Autostart requires a graphical session and is silently ignored on a server; do not write a `.desktop` file as the primary mechanism.
+- **Mechanism.** Write a systemd **user** unit to `~/.config/systemd/user/<name>.service`. Use `WantedBy=default.target` in the `[Install]` section — `multi-user.target` does not exist in the user instance.
+- **Boot persistence.** A systemd user unit starts at login by default. To start at boot without a login, lingering must be enabled with `loginctl enable-linger <username>`. The script must attempt, in this order:
+  1. `loginctl enable-linger` (self-linger; supported on systemd ≥ 232, which covers Ubuntu 22.04+ and RHEL 9+).
+  2. `sudo -n loginctl enable-linger <username>` (non-interactive sudo; do not prompt).
+  3. If both fail, print the exact command `sudo loginctl enable-linger <username>` and explain that without it the service starts on first login, not at boot.
+- **Environment.** `systemctl --user` requires `XDG_RUNTIME_DIR`. When the variable is missing (common in SSH sessions), set `XDG_RUNTIME_DIR=/run/user/<uid>` for every `systemctl --user` and `loginctl` invocation.
+- **Command.** Run `systemctl --user daemon-reload`, then `systemctl --user enable --now <name>.service`. If `enable --now` fails, fall back to separate `enable` and `start` calls and report the error.
+- **Visible mode is impossible.** A headless server has no terminal emulator. If the user did not pass `--hide`, print a clear warning that visible mode is unavailable on a headless host and install in background mode (`hidden=True`).
+- **`--stop`.** Run `systemctl --user stop <name>.service`, `systemctl --user disable <name>.service`, remove the unit file, and run `systemctl --user daemon-reload`. Also remove any XDG `.desktop` entry left from a previous desktop install, and kill any remaining PIDs.
+- **Ubuntu 24.04 / systemd 255 caveat.** systemd 255.4-1ubuntu8.x has a known regression where logind’s garbage collector kills `user@<uid>.service` on the last session logout even when `Linger=yes`. This is upstream bug systemd/systemd#43361 and Launchpad bug #2163239, fixed in systemd v256.3 (PR #33786) but not backported to v255. The script must **not** silently promise boot persistence on this exact combination. If `systemctl --version` reports 255 and `/etc/os-release` identifies Ubuntu 24.04, print a warning that the user should verify with `loginctl show-user "$USER" -p Linger` and, if the service disappears after logout, apply the documented workaround in `/etc/systemd/logind.conf`: `UserStopDelaySec=infinity` and `KillUserProcesses=no`, then `systemctl restart systemd-logind`. Do not edit `/etc/systemd/logind.conf` automatically — that requires root and changes global login behaviour.
+- **Unit file quoting.** Use double quotes and escape `\` and `"`; write literal `%` as `%%` to avoid systemd specifier expansion. Do not use `shlex.quote` for `ExecStart=` — systemd does not understand shell single quotes.
+- **Journal.** Direct `StandardOutput=null` and `StandardError=null` in the unit so the user service does not rely on a journal that may not be readable from an SSH session; optionally mention `journalctl --user -u <name>.service` in the success message.
+
 ## Mandatory verification steps for every update
 
 Before changing any code, the agent must consult the latest official sources:
@@ -183,10 +201,14 @@ Before changing any code, the agent must consult the latest official sources:
 2. Apple Developer Documentation: `launchd.plist` man page, `launchctl bootstrap` / `bootout` domain targets, macOS 26 Tahoe release notes.
 3. Apple Developer Forums: iOS Background Execution Limits, `BGTaskScheduler` time budgets, `dasd` scheduling behavior, force-quit restrictions.
 4. Termux Wiki: Termux:Boot setup, `~/.termux/boot/` script requirements, Android 15 background restrictions.
-5. freedesktop.org: XDG Autostart Specification (current version), Desktop Entry Specification (Exec key quoting rules).
+5. freedesktop.org: XDG Autostart Specification (current version), Desktop Entry Specification (Exec key quoting rules), `systemd.service(5)` and `loginctl(1)` man pages (`enable-linger`, user manager lifetime).
 6. XFCE Bugzilla / KDE Bugzilla: status of `Path=` key support in autostart entries.
 7. Distribution release notes: default terminal emulator changes for Fedora (Ptyxis), Ubuntu (Ptyxis 25.10+), Linux Mint (gnome-terminal / mate-terminal), Pop!_OS COSMIC.
 8. Python `subprocess` docs: current `creationflags` constants on Windows.
+9. **Red Hat documentation:** RHEL 9 and RHEL 10 “Enabling systemd services” — the official statement that `loginctl enable-linger <username>` is required for user services to start at boot and persist after logout (docs.redhat.com, “Building, running, and managing containers” § 13.2 / 14.2).
+10. **Ubuntu Server documentation:** Ubuntu Server Guide and systemd 255 release notes; Launchpad bug #2163239 and systemd/systemd issue #43361 (logind GC kills `user@.service` on last logout despite `Linger=yes` in systemd 255.4-1ubuntu8.x; fixed in v256.3, not backported to v255). Confirm the current status before shipping the Ubuntu 24.04 warning.
+11. **systemd upstream:** `loginctl(1)` (“If enabled for a specific user, a user manager is spawned for the user at boot and kept around after logouts”), `systemd-user-sessions.service`, `pam_systemd(8)` (`XDG_RUNTIME_DIR`), and `systemd.special(7)` (`default.target` for user instances).
+12. **Headless SSH environment:** confirm that `XDG_RUNTIME_DIR` is not always set by `pam_systemd` in SSH sessions and that `systemctl --user` returns `Failed to connect to bus` without it; verify the `/run/user/<uid>` fallback.
 
 Compare each documented behavior against the current script. Fix every mismatch, deprecated flag, or newly documented bug. If a platform has no confirmed changes, state that explicitly instead of guessing.
 
@@ -197,6 +219,7 @@ Compare each documented behavior against the current script. Fix every mismatch,
    - The bug (with exact location in the old script).
    - The fix applied.
    - The authoritative documentation that justifies the fix (URL or document title).
+3. An explicit statement of which platforms had **no confirmed changes** in this update.
 
 Do not add features that were not requested. Do not change the `.py` / `.pyw` naming rules on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. Do not attempt to add iOS support — it is impossible by platform design.
 ```
