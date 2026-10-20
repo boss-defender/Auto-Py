@@ -28,6 +28,9 @@ Visible when you want to see it. Silent when you don't. One command to install, 
 > **Linux users — no `sudo` or root needed.** Everything runs at the user level via XDG Autostart.
 
 > [!NOTE]
+>Linux server: No sudo for install. The program runs as a systemd user service (background only, no visible window). For boot persistence (start without login), run loginctl enable-linger "$USER" once — auto.py tries this automatically and falls back to printing the command if it lacks non-interactive sudo. On Ubuntu 24.04 + systemd 255, verify with loginctl show-user "$USER" -p Linger and apply the documented logind workaround if the service disappears after logout.
+
+> [!NOTE]
 > **macOS users — no `sudo` or root needed.** LaunchAgents run at the user level in `~/Library/LaunchAgents/`. Running `auto.py` with `sudo` loads the job into the `system` domain instead of your GUI login session, where it will not behave as expected. The first time the script runs from a LaunchAgent, macOS may prompt for privacy-protected resources (Files & Folders, Accessibility, Automation) — approve the prompt under **System Settings → Privacy & Security**, otherwise the script starts but silently fails on those resources.
 
 > [!NOTE]
