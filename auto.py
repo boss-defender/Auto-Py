@@ -231,22 +231,61 @@ def linux_systemd_unit_path(name):
     return os.path.join(LINUX_SYSTEMD_USER_DIR, f"{name}.service")
 
 
+def linux_launcher_path(name):
+    return os.path.join(BASE_DIR, f"run-{name}.sh")
+
+
+def linux_write_launcher(copy_path, copy_dir, name):
+    """Write a tiny POSIX launcher script and return its path.
+
+    Every Linux autostart mechanism (XDG .desktop Exec, the systemd unit's
+    ExecStart, a Hyprland exec-once, a cron @reboot line) points at THIS
+    script instead of embedding `cd ... && python ...` inline.  That removes
+    the single biggest source of breakage: the freedesktop Exec field and
+    KDE's KConfig parser disagree on how `\\"` inside a nested
+    `sh -c "cd \\"x\\" && python \\"y\\""` should be unescaped, so GNOME,
+    Cinnamon and KDE could each silently refuse to launch the entry.  A plain
+    path to an executable script has no quoting ambiguity on any launcher."""
+    python_exe = sys.executable or "/usr/bin/python3"
+    path = linux_launcher_path(name)
+    content = (
+        "#!/bin/sh\n"
+        f"cd {shlex.quote(copy_dir)} || exit 1\n"
+        f"exec {shlex.quote(python_exe)} {shlex.quote(copy_path)} \"$@\"\n"
+    )
+    with open(path, "w") as f:
+        f.write(content)
+    os.chmod(path, 0o755)
+    return path
+
+
+def linux_remove_launcher(name):
+    path = linux_launcher_path(name)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+            print(f"[+] Removed launcher script: {path}")
+        except Exception as e:
+            print(f"[-] Could not remove launcher {path}: {e}")
+
+
 def linux_create_autostart(copy_path, copy_dir, name, hidden):
-    python_exe = sys.executable
-    inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
+    """XDG Autostart .desktop entry, for traditional desktops (GNOME, Cinnamon,
+    MATE, XFCE, KDE, Budgie) that honor ~/.config/autostart.  NOT used on
+    Hyprland/Wayland compositors that ignore XDG autostart — those go through
+    systemd (see install())."""
+    launcher = linux_write_launcher(copy_path, copy_dir, name)
 
     if hidden:
-        cmd = ["sh", "-c", inner]
-        exec_line = _build_exec_line(cmd)
+        exec_line = _build_exec_line([launcher])
         terminal = "false"
     else:
-        cmd = _find_linux_terminal(python_exe, copy_path, copy_dir)
+        cmd = _find_linux_terminal(launcher)
         if cmd:
             exec_line = _build_exec_line(cmd)
             terminal = "false"
         else:
-            cmd = ["sh", "-c", inner]
-            exec_line = _build_exec_line(cmd)
+            exec_line = _build_exec_line([launcher])
             terminal = "false"
             print("[!] No terminal emulator found for autostart entry; "
                   "the program will run without a visible window.")
@@ -274,26 +313,206 @@ def linux_remove_autostart(name):
         print(f"[+] Removed Linux autostart entry: {path}")
 
 
-def _find_linux_terminal(python_exe, copy_path, copy_dir):
-    inner = f'cd "{copy_dir}" && "{python_exe}" "{copy_path}"'
+def _find_linux_terminal(launcher):
+    """Return a terminal-emulator command that runs the launcher script, or
+    None.  The flag that precedes the command differs per terminal."""
+    # Native terminals come BEFORE the Debian `x-terminal-emulator` alternative:
+    # on Ubuntu and Linux Mint that alternative is gnome-terminal.wrapper,
+    # which re-joins everything after `-e` into one string and re-splits it,
+    # mangling any quoted `sh -c "..."` argument (the reason visible mode
+    # failed on Mint/Ubuntu before).  A single launcher path survives it, but
+    # the native terminal's own `--` syntax is cleaner still.
     candidates = [
-        ["xdg-terminal-exec", "sh", "-c", inner],
-        ["x-terminal-emulator", "-e", "sh", "-c", inner],
-        ["ptyxis", "--", "sh", "-c", inner],
-        ["kgx", "--", "sh", "-c", inner],
-        ["gnome-terminal", "--", "sh", "-c", inner],
-        ["konsole", "-e", "sh", "-c", inner],
-        ["xfce4-terminal", "-x", "sh", "-c", inner],
-        ["mate-terminal", "-x", "sh", "-c", inner],
-        ["cosmic-term", "-e", "sh", "-c", inner],
-        ["ghostty", "-e", "sh", "-c", inner],
-        ["foot", "-e", "sh", "-c", inner],
-        ["xterm", "-e", "sh", "-c", inner],
+        ["xdg-terminal-exec", launcher],          # Omarchy, freedesktop default
+        ["ptyxis", "--", launcher],               # Ubuntu 25.10+, Fedora 41+
+        ["kgx", "--", launcher],                  # GNOME Console
+        ["gnome-terminal", "--", launcher],       # Ubuntu <=25.04, Mint Cinnamon
+        ["konsole", "-e", launcher],              # KDE
+        ["xfce4-terminal", "-x", launcher],       # Mint Xfce, Xubuntu
+        ["mate-terminal", "-x", launcher],        # Mint MATE
+        ["cosmic-term", "-e", launcher],          # Pop!_OS COSMIC
+        ["alacritty", "-e", launcher],            # Omarchy <=3.x default
+        ["kitty", launcher],
+        ["ghostty", "-e", launcher],
+        ["foot", launcher],                       # Omarchy 4 default
+        ["wezterm", "start", "--", launcher],
+        ["x-terminal-emulator", "-e", launcher],  # Debian alternative, last
+        ["xterm", "-e", launcher],
     ]
     for cmd in candidates:
         if shutil.which(cmd[0]):
             return cmd
     return None
+
+
+def _is_hyprland():
+    """True when the current graphical session is Hyprland (incl. Omarchy).
+
+    Hyprland does not implement the XDG Autostart spec, so ~/.config/autostart
+    entries never fire; such sessions must use systemd (Omarchy runs uwsm,
+    which activates the user manager) or an exec-once in the Hyprland config."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return True
+    cur = (os.environ.get("XDG_CURRENT_DESKTOP", "")
+           + " " + os.environ.get("XDG_SESSION_DESKTOP", "")
+           + " " + os.environ.get("DESKTOP_SESSION", "")).lower()
+    return "hyprland" in cur or "omarchy" in cur
+
+
+def _is_wlroots_wayland():
+    """Other Wayland compositors (sway, river, wayfire, niri, ...) that, like
+    Hyprland, do not run XDG autostart.  GNOME and KDE Wayland DO run it, so
+    they are intentionally excluded here."""
+    if os.environ.get("WAYLAND_DISPLAY") is None:
+        return False
+    cur = (os.environ.get("XDG_CURRENT_DESKTOP", "")
+           + " " + os.environ.get("XDG_SESSION_DESKTOP", "")
+           + " " + os.environ.get("DESKTOP_SESSION", "")).lower()
+    if any(de in cur for de in ("gnome", "kde", "plasma")):
+        return False
+    return any(wm in cur for wm in
+               ("sway", "river", "wayfire", "niri", "hyprland", "labwc", "wlroots"))
+
+
+# ------------------------------------------------------------------
+# Linux — Hyprland / Omarchy autostart
+#
+# Hyprland ignores ~/.config/autostart, so an XDG entry never fires there.
+# The supported mechanism is the compositor's own config:
+#   * Omarchy 4.x (Hyprland >=0.55, Lua):  ~/.config/hypr/autostart.lua
+#         o.launch_on_start("cmd")          (Omarchy manual, "Dotfiles")
+#   * plain Hyprland >=0.55 (Lua):          ~/.config/hypr/hyprland.lua
+#         hl.on("hyprland.start", function() hl.exec_cmd("cmd") end)
+#   * Omarchy <=3.x (hyprlang):             ~/.config/hypr/autostart.conf
+#         exec-once = cmd
+#   * plain Hyprland <=0.54 (hyprlang):     ~/.config/hypr/hyprland.conf
+#         exec-once = cmd
+# Our lines are wrapped in BEGIN/END markers so reinstall replaces them and
+# --stop removes exactly what we added, leaving the user's config intact.
+# ------------------------------------------------------------------
+HYPR_DIR = os.path.expanduser("~/.config/hypr")
+
+
+def _hypr_marker(name, comment):
+    return (f"{comment} VisibleBackground {name} BEGIN",
+            f"{comment} VisibleBackground {name} END")
+
+
+def _lua_quote(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+
+
+def _hypr_target():
+    """Pick the Hyprland config file and syntax to use.
+    Returns (path, kind) with kind in {"omarchy-lua", "lua", "conf"}, or
+    (None, None) when no Hyprland config exists."""
+    lua_main = os.path.join(HYPR_DIR, "hyprland.lua")
+    lua_auto = os.path.join(HYPR_DIR, "autostart.lua")
+    conf_main = os.path.join(HYPR_DIR, "hyprland.conf")
+    conf_auto = os.path.join(HYPR_DIR, "autostart.conf")
+
+    def _mentions(path, needle):
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                return needle in f.read()
+        except OSError:
+            return False
+
+    # Lua config takes precedence: since Hyprland 0.55 a hyprland.lua is
+    # loaded instead of hyprland.conf, and Omarchy 4 leaves old .conf files
+    # in place but no longer sources them.
+    if os.path.isfile(lua_main):
+        if os.path.isfile(lua_auto) and (
+            _mentions(lua_main, "autostart") or _mentions(lua_auto, "o.launch")
+            or os.path.isdir("/usr/share/omarchy")
+            or os.path.isdir(os.path.expanduser("~/.local/share/omarchy"))
+        ):
+            return lua_auto, "omarchy-lua"
+        return lua_main, "lua"
+    if os.path.isfile(conf_main):
+        if os.path.isfile(conf_auto) and _mentions(conf_main, "autostart.conf"):
+            return conf_auto, "conf"
+        return conf_main, "conf"
+    return None, None
+
+
+def _strip_block(text, begin, end):
+    out, skip = [], False
+    for ln in text.splitlines():
+        if ln.strip() == begin:
+            skip = True
+            continue
+        if ln.strip() == end:
+            skip = False
+            continue
+        if not skip:
+            out.append(ln)
+    return "\n".join(out)
+
+
+def hyprland_create_autostart(copy_path, copy_dir, name, hidden):
+    """Register the launcher in the Hyprland config.  Returns True on success."""
+    path, kind = _hypr_target()
+    if not path:
+        # Hyprland running with no user config yet: create the modern Lua one?
+        # No - Hyprland would then stop generating its default config.  Use
+        # the legacy-compatible conf only if the dir exists, else give up.
+        print("[!] Hyprland detected but no ~/.config/hypr/hyprland.(lua|conf) found.")
+        return False
+
+    launcher = linux_write_launcher(copy_path, copy_dir, name)
+    if hidden:
+        argv = [launcher]
+    else:
+        argv = _find_linux_terminal(launcher) or [launcher]
+    cmd = " ".join(shlex.quote(a) for a in argv)
+
+    comment = "--" if kind in ("omarchy-lua", "lua") else "#"
+    begin, end = _hypr_marker(name, comment)
+    if kind == "omarchy-lua":
+        body = f"o.launch_on_start({_lua_quote(cmd)})"
+    elif kind == "lua":
+        body = (f'hl.on("hyprland.start", function() '
+                f'hl.exec_cmd({_lua_quote(cmd)}) end)')
+    else:
+        body = f"exec-once = {cmd}"
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        text = ""
+    text = _strip_block(text, begin, end).rstrip("\n")
+    text += f"\n\n{begin}\n{body}\n{end}\n"
+
+    tmp = path + ".vbtmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+    print(f"[+] Hyprland autostart added to {path} ({kind}).")
+    return True
+
+
+def hyprland_remove_autostart(name):
+    for fname, comment in (("autostart.lua", "--"), ("hyprland.lua", "--"),
+                           ("autostart.conf", "#"), ("hyprland.conf", "#")):
+        path = os.path.join(HYPR_DIR, fname)
+        if not os.path.isfile(path):
+            continue
+        begin, end = _hypr_marker(name, comment)
+        try:
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        if begin not in text:
+            continue
+        new = _strip_block(text, begin, end).rstrip("\n") + "\n"
+        tmp = path + ".vbtmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new)
+        os.replace(tmp, path)
+        print(f"[+] Removed Hyprland autostart entry from {path}")
 
 
 def linux_launch_now(copy_path, copy_dir, name, hidden):
@@ -331,9 +550,14 @@ def linux_launch_now(copy_path, copy_dir, name, hidden):
         )
         print("[+] Started now (hidden/background).")
     else:
-        cmd = _find_linux_terminal(python_exe, copy_path, copy_dir)
+        launcher = linux_launcher_path(name)
+        if not os.path.exists(launcher):
+            launcher = linux_write_launcher(copy_path, copy_dir, name)
+        cmd = _find_linux_terminal(launcher)
         if cmd:
-            subprocess.Popen(cmd, start_new_session=True)
+            subprocess.Popen(cmd, start_new_session=True,
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
             print(f"[+] Started now in a visible terminal ({cmd[0]}).")
         else:
             subprocess.Popen(
@@ -1238,6 +1462,9 @@ def install(target_script, hidden):
             sys.exit(1)
         windows_launch_now(copy_path, copy_dir, name, ext)
     elif system == "linux":
+        if hasattr(os, "geteuid") and os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+            print("[!] Running under sudo: the autostart entry will be created for")
+            print("    root, not for your desktop user.  Run without sudo instead.")
         copy_path = os.path.normpath(
             os.path.join(BASE_DIR, os.path.basename(target_script))
         )
@@ -1261,7 +1488,20 @@ def install(target_script, hidden):
                 linux_create_cron_autostart(copy_path, copy_dir, name)
                 linux_mechanism = "cron"
             linux_launch_now(copy_path, copy_dir, name, hidden=True)
+        elif _is_hyprland() and hyprland_create_autostart(
+                copy_path, copy_dir, name, hidden):
+            # Hyprland/Omarchy: use ONLY the compositor config.  Omarchy runs
+            # uwsm, which also activates xdg-desktop-autostart.target, so an
+            # extra ~/.config/autostart entry would start the program twice.
+            linux_remove_autostart(name)
+            linux_mechanism = "hyprland"
+            linux_launch_now(copy_path, copy_dir, name, hidden)
         else:
+            if _is_wlroots_wayland():
+                print("[!] This Wayland compositor may not run XDG autostart")
+                print("    entries.  If the program does not start after login,")
+                print(f"    add `{linux_launcher_path(name)}` to your compositor's")
+                print("    startup config (e.g. `exec` in sway's config).")
             linux_create_autostart(copy_path, copy_dir, name, hidden)
             linux_mechanism = "xdg"
             linux_launch_now(copy_path, copy_dir, name, hidden)
@@ -1344,6 +1584,8 @@ def uninstall(target_script):
         linux_remove_autostart(name)
         linux_remove_systemd_service(name)
         linux_remove_cron_autostart(name)
+        hyprland_remove_autostart(name)
+        linux_remove_launcher(name)
 
     for cp in copy_paths:
         if os.path.exists(cp):
