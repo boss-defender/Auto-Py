@@ -96,6 +96,93 @@ def ensure_directory():
         os.makedirs(MACOS_LAUNCHAGENTS_DIR, exist_ok=True)
 
 
+def _windows_set_hidden(path):
+    """Set the FILE_ATTRIBUTE_HIDDEN bit on a path, preserving every other
+    attribute.  Returns True on success.  Windows only."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception as e:
+        print(f"[!] Could not load ctypes to hide the folder: {e}")
+        return False
+
+    FILE_ATTRIBUTE_HIDDEN = 0x02
+    INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+
+    GetAttrs = ctypes.windll.kernel32.GetFileAttributesW
+    GetAttrs.argtypes = [wintypes.LPCWSTR]
+    GetAttrs.restype = wintypes.DWORD
+    SetAttrs = ctypes.windll.kernel32.SetFileAttributesW
+    SetAttrs.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+    SetAttrs.restype = wintypes.BOOL
+
+    current = GetAttrs(path)
+    if current == INVALID_FILE_ATTRIBUTES:
+        # Fall back to a plain set if the attributes cannot be read.
+        current = 0
+    if current & FILE_ATTRIBUTE_HIDDEN:
+        return True  # already hidden
+    if SetAttrs(path, current | FILE_ATTRIBUTE_HIDDEN):
+        return True
+    err = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else 0
+    print(f"[!] Could not set the hidden attribute (error {err}).")
+    return False
+
+
+def hide_install_dir():
+    """Make the install folder (BASE_DIR) hidden, per the OS convention.
+
+    Windows: set the FILE_ATTRIBUTE_HIDDEN bit.  A leading dot means nothing
+    to Explorer, so the attribute is the only thing that hides a folder.
+
+    Unix-like (Linux, Linux servers, macOS/Darwin, Android): a folder is
+    hidden purely by a leading dot in its name.  So:
+      * if the folder name already starts with a dot, do nothing;
+      * otherwise rename it to ".<name>".
+
+    This mutates the BASE_DIR / STATE_FILE globals when it renames, so it
+    MUST run before the script is copied in and before any autostart entry is
+    written — those record absolute paths under BASE_DIR, and renaming after
+    them would break persistence.  (iOS never reaches here; it is unsupported.)
+
+    Returns the possibly-updated BASE_DIR.
+    """
+    global BASE_DIR, STATE_FILE
+    path = BASE_DIR
+    if not os.path.isdir(path):
+        os.makedirs(path, exist_ok=True)
+
+    if _is_windows():
+        if _windows_set_hidden(path):
+            print(f"[+] Hid the install folder (hidden attribute): {path}")
+        return BASE_DIR
+
+    # Unix-like: hidden iff the basename starts with a dot.
+    parent = os.path.dirname(path.rstrip(os.sep))
+    base = os.path.basename(path.rstrip(os.sep))
+    if base.startswith("."):
+        print(f"[+] Install folder already starts with a dot (hidden): {path}")
+        return BASE_DIR
+
+    hidden_path = os.path.join(parent, "." + base)
+    if os.path.exists(hidden_path):
+        # A dotted folder already exists; don't clobber it.  Keep using the
+        # current (visible) folder rather than risk merging two trees.
+        print(f"[!] Cannot rename '{path}' to '{hidden_path}': target exists.")
+        print("    Leaving the folder visible so nothing is overwritten.")
+        return BASE_DIR
+    try:
+        os.rename(path, hidden_path)
+    except OSError as e:
+        print(f"[!] Could not rename '{path}' to hide it: {e}")
+        return BASE_DIR
+
+    BASE_DIR = hidden_path
+    STATE_FILE = os.path.join(BASE_DIR, "state.json")
+    print(f"[+] Hid the install folder by renaming: {path} → {hidden_path}")
+    return BASE_DIR
+
+
 def load_state():
     if not os.path.exists(STATE_FILE):
         return {}
@@ -187,6 +274,9 @@ def _run(cmd, **kwargs):
     except FileNotFoundError:
         exe = cmd[0] if cmd else "command"
         return subprocess.CompletedProcess(cmd, 127, "", f"{exe}: not found")
+    except subprocess.TimeoutExpired:
+        exe = cmd[0] if cmd else "command"
+        return subprocess.CompletedProcess(cmd, 124, "", f"{exe}: timed out")
     except OSError as e:
         return subprocess.CompletedProcess(cmd, 126, "", str(e))
 
@@ -1545,7 +1635,7 @@ def _kill_existing(name, copy_path):
         pass
 
 
-def install(target_script, hidden):
+def install(target_script, hidden, hide_dir=False):
     if _is_ios():
         ios_unsupported()
 
@@ -1554,6 +1644,10 @@ def install(target_script, hidden):
         sys.exit(1)
     target_script = os.path.abspath(target_script)
     ensure_directory()
+    # Hide the install folder BEFORE anything is written into it, so every
+    # copied file and every autostart entry records the final (hidden) path.
+    if hide_dir:
+        hide_install_dir()
 
     name = sanitize_name(target_script)
     system = platform.system().lower()
@@ -1751,11 +1845,16 @@ def uninstall(target_script):
 def main():
     parser = argparse.ArgumentParser(
         description="Install a Python script to run on every reboot/login — "
-                    "visible by default, hidden with --hide."
+                    "visible by default, hidden with --hide, hidden plus a "
+                    "hidden install folder with --hidden."
     )
     parser.add_argument("script", help="Python script to schedule")
     parser.add_argument("--hide", action="store_true",
                         help="run silently in the background (no window)")
+    parser.add_argument("--hidden", action="store_true",
+                        help="like --hide, and also hide the install folder "
+                             "(~/.configs): HIDDEN attribute on Windows, "
+                             "dot-prefixed (already hidden) on Unix-like systems")
     parser.add_argument("--stop", action="store_true",
                         help="stop and permanently remove the autostart entry")
     args = parser.parse_args()
@@ -1763,7 +1862,12 @@ def main():
     if args.stop:
         uninstall(args.script)
     else:
-        install(args.script, hidden=args.hide)
+        # --hidden implies --hide (background, no window) AND hides the folder.
+        install(
+            args.script,
+            hidden=args.hide or args.hidden,
+            hide_dir=args.hidden,
+        )
 
 
 if __name__ == "__main__":
