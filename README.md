@@ -102,7 +102,7 @@ You are a senior cross-platform systems engineer. Update the provided `auto.py` 
 
 ## Supported platforms (must all be preserved)
 
-**Windows:** Windows 10 (all supported builds), Windows 11 (23H2, 24H2, 25H2). Windows 12 has not shipped as of October 2026 — Microsoft has made no announcement and explicitly denied plans for a 2026 release. Do not add Windows 12 code paths; state explicitly in the change log that it is unsupported because it does not exist.
+**Windows:** Windows 10 (all supported builds), Windows 11 (23H2, 24H2, 25H2). Windows 12 has not shipped as of October 2026 — Microsoft has made no announcement and explicitly denied plans for a 2026 release. Add Windows 12 / latest version code paths only if windows 12  or more latest version officially released ; also auto.py should be in a way that it doesn't require cmd in administrative mode to run it. I mean cmd in normal mode can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. 
 
 **macOS:** macOS Sequoia (15), macOS Tahoe (26). The script uses LaunchAgents (`~/Library/LaunchAgents/com.visiblebackground.*.plist`) with `RunAtLoad=true` for login persistence. macOS 26 Tahoe has known `launchctl bootstrap` reliability issues; the fallback to legacy `launchctl load -w` must be preserved.
 
@@ -139,6 +139,7 @@ Current documented defaults (for verification):
 - Hidden subprocess flags: `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB`. Must NOT include `DETACHED_PROCESS` — MSDN documents that `CREATE_NO_WINDOW` is ignored when combined with `DETACHED_PROCESS`.
 - For Windows 11 build ≥ 26100 (24H2 = 26100, 25H2 = 26200), prepend `timeout /t 5 /nobreak >nul &&` to the task action (not inside the VBS launcher) for “Delayed Desktop Initialization.”
 - `--stop` must work regardless of whether the original argument was `.py` or `.pyw`; use the sanitized base name to locate the copy.
+- Also auto.py should be in a way that it doesn't require cmd in administrative mode to run it. I mean cmd in normal mode can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. 
 
 ## macOS-specific rules
 
@@ -146,6 +147,8 @@ Current documented defaults (for verification):
 - Load via `launchctl bootstrap gui/$(id -u) <plist>` first. If it fails (macOS 26 Tahoe is known to return EIO/exit 5 on valid plists), fall back to `launchctl load -w <plist>`. On `--stop`, try `launchctl bootout gui/$(id -u)/<label>` first, then `launchctl unload -w`.
 - Visible mode: open Terminal via `osascript -e 'tell application "Terminal" to do script "..."'`.
 - Hidden mode: run Python directly with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`.
+- Also auto.py should be in a way that it doesn't require password to run it. I mean without password, can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. 
+
 
 ## iOS-specific rules
 
@@ -161,6 +164,7 @@ Current documented defaults (for verification):
 - The script must not write any files to `~/Library/LaunchAgents` on iOS, must not call `launchctl`, and must not create any plist.
 - The same `ios_unsupported()` guard must run at the top of both `install()` and `uninstall()` so that neither `--hide` nor `--stop` can ever reach platform-specific code on iOS.
 - If the user asks for a best-effort alternative, the script may print (but must not implement) that the only Apple-sanctioned path is a Shortcuts automation triggered by “Device Unlocked” or “Wi-Fi connected” after boot. This is a user-configured workaround, not something a Python script can install. The script must not pretend it has configured this for the user.
+- Also auto.py should be in a way that it doesn't require password to run it. I mean without password, can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. 
 
 ## Android / Termux rules
 
@@ -169,6 +173,7 @@ Current documented defaults (for verification):
 - Visible mode: use `am start --user 0 -n com.termux/.app.TermuxActivity -a android.intent.action.RUN` with the `RUN_COMMAND_PATH` / `RUN_COMMAND_ARGUMENTS` extras so a terminal window appears.
 - Hidden mode: background the Python process with output redirected to `/dev/null`.
 - Print a warning that Android 15 may still kill the process despite the wake-lock (upstream issue #5150) and instruct the user to disable child-process restrictions if the option exists.
+- Also auto.py should be in a way that it doesn't require password to run it. I mean without password, can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. 
 
 ## Linux desktop rules (XDG Autostart)
 
@@ -179,6 +184,7 @@ Current documented defaults (for verification):
 - Hidden mode: `subprocess.Popen` with `stdout=DEVNULL`, `stderr=DEVNULL`, `start_new_session=True`, `cwd=copy_dir`.
 - Visible mode: explicitly launch a terminal emulator from the detection list. Do not rely on `Terminal=true` alone — many desktop environments ignore it.
 - If no terminal is found, fall back to detached launch and print a warning.
+- Also auto.py should be in a way that it doesn't require password to run it. I mean without password, can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. 
 
 ## Linux server rules (Ubuntu Server, RHEL Server, and any headless systemd host)
 
@@ -195,6 +201,7 @@ Current documented defaults (for verification):
 - **Ubuntu 24.04 / systemd 255 caveat.** systemd 255.4-1ubuntu8.x has a known regression where logind’s garbage collector kills `user@<uid>.service` on the last session logout even when `Linger=yes`. This is upstream bug systemd/systemd#43361 and Launchpad bug #2163239, fixed in systemd v256.3 (PR #33786) but not backported to v255. The script must **not** silently promise boot persistence on this exact combination. If `systemctl --version` reports 255 and `/etc/os-release` identifies Ubuntu 24.04, print a warning that the user should verify with `loginctl show-user "$USER" -p Linger` and, if the service disappears after logout, apply the documented workaround in `/etc/systemd/logind.conf`: `UserStopDelaySec=infinity` and `KillUserProcesses=no`, then `systemctl restart systemd-logind`. Do not edit `/etc/systemd/logind.conf` automatically — that requires root and changes global login behaviour.
 - **Unit file quoting.** Use double quotes and escape `\` and `"`; write literal `%` as `%%` to avoid systemd specifier expansion. Do not use `shlex.quote` for `ExecStart=` — systemd does not understand shell single quotes.
 - **Journal.** Direct `StandardOutput=null` and `StandardError=null` in the unit so the user service does not rely on a journal that may not be readable from an SSH session; optionally mention `journalctl --user -u <name>.service` in the success message.
+- Also auto.py should be in a way that it doesn't require password to run it. I mean without password, can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. 
 
 ## Mandatory verification steps for every update
 
@@ -212,6 +219,7 @@ Before changing any code, the agent must consult the latest official sources:
 10. **Ubuntu Server documentation:** Ubuntu Server Guide and systemd 255 release notes; Launchpad bug #2163239 and systemd/systemd issue #43361 (logind GC kills `user@.service` on last logout despite `Linger=yes` in systemd 255.4-1ubuntu8.x; fixed in v256.3, not backported to v255). Confirm the current status before shipping the Ubuntu 24.04 warning.
 11. **systemd upstream:** `loginctl(1)` (“If enabled for a specific user, a user manager is spawned for the user at boot and kept around after logouts”), `systemd-user-sessions.service`, `pam_systemd(8)` (`XDG_RUNTIME_DIR`), and `systemd.special(7)` (`default.target` for user instances).
 12. **Headless SSH environment:** confirm that `XDG_RUNTIME_DIR` is not always set by `pam_systemd` in SSH sessions and that `systemctl --user` returns `Failed to connect to bus` without it; verify the `/run/user/<uid>` fallback.
+13. **Also auto.py should be in a way that it doesn't require password to run it. I mean without password,or without administrative mode , it can use auto.py and all its feature . It should survive reboot or power off and on . and relogin.**
 
 Compare each documented behavior against the current script. Fix every mismatch, deprecated flag, or newly documented bug. If a platform has no confirmed changes, state that explicitly instead of guessing.
 
@@ -230,14 +238,13 @@ Do not add features that were not requested. Do not change the `.py` / `.pyw` na
 **Then again give this prompt:**
 
 ```text
-Re-check the script again & again, find bugs and fix them all. Always read the latest documentation and guidelines of every supported Linux distro, and linux server, latest windows 10/ 11 or latest windows and latest mac os , latest ios and android 9 to 15 or latest available version . So make sure that on every distro and operating system , it perfectly works, even after reboot and even after shutdown and start operating system again. Fix all the bugs and errors. Please re-check it perfectly again. Don't make any errors, it should work very smoothly without causing any issues. you can do online deep research for latest documentation for every supported Linux distro, and linux server, latest windows 10/ 11 or latest windows and latest mac os , latest ios and android 9 to 15 or latest available version . double check everything and make it perfect . 
+Re-check the script again & again, find bugs and fix them all. Always read the latest documentation and guidelines of every supported Linux distro, and linux server, latest windows 10/ 11 or latest windows and latest mac os , latest ios and android 9 to 15 or latest available version . So make sure that on every distro and operating system , it perfectly works, even after reboot and even after shutdown and start operating system again. Fix all the bugs and errors. Please re-check it perfectly again. Don't make any errors, it should work very smoothly without causing any issues. Also auto.py should be in a way that it doesn't require password to run it. I mean without password,or without administrative mode , it can use auto.py and all its feature . It should survive reboot or power off and on . and relogin. you can do online deep research for latest documentation for every supported Linux distro, and linux server, latest windows 10/ 11 or latest windows and latest mac os , latest ios and android 9 to 15 or latest available version . double check everything and make it perfect . 
 ```
 
 </details>
 
 ---
 
----
 
 ## ⚡ Quick Start
 
