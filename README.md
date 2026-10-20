@@ -233,7 +233,8 @@ Compare each documented behavior against the current script. Fix every mismatch,
    - The authoritative documentation that justifies the fix (URL or document title).
 3. An explicit statement of which platforms had **no confirmed changes** in this update.
 
-Do not add features that were not requested. Do not change the `.py` / `.pyw` naming rules on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. Do not attempt to add iOS support — it is impossible by platform design.
+Do not add features that were not requested. Do not change the `.py` / `.pyw` naming rules on Windows or the `--hide` semantics. Do not introduce elevation requirements on Linux. Do not change --hidden feature rule and folder hidden mechanism . Re-check the script again and again, find bugs and fix them all. it should work very smoothly without causing any issues.on  every supported Linux distro, and  linux server, latest windows 10/ 11 or latest windows and latest mac os , latest ios and android 9 to 16 or latest available version .
+
 ```
 
 **Then again give this prompt:**
